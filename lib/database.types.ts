@@ -423,6 +423,7 @@ export type Database = {
     }
     Functions: {
       admin_user_id_by_email: { Args: { email: string }; Returns: string }
+      can_delete_document: { Args: { name: string }; Returns: boolean }
       can_read_document: { Args: { name: string }; Returns: boolean }
       can_write_document: { Args: { name: string }; Returns: boolean }
       create_firm: {
