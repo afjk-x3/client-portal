@@ -1,7 +1,7 @@
 # Client Portal: Design Spec
 
 - **Date:** 2026-09-24
-- **Status:** Sections approved in chat; written spec awaiting review
+- **Status:** Approved 2026-09-24
 - **Working name:** Client Portal (one `APP_NAME` constant; rename later)
 
 ## 1. Summary
