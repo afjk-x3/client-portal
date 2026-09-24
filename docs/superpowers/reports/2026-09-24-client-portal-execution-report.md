@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24, after the Phase 4–5 review fixes
+- **Last updated:** 2026-09-24, all phases implemented; Phase 6 and 7 reviews in progress
 
 This report is updated and pushed after every phase, so it stays current if the session ends.
 
@@ -16,8 +16,8 @@ This report is updated and pushed after every phase, so it stays current if the 
 | 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `e865b32`. |
 | 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d5477f7`. |
 | 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d5477f7`. pgTAP now 193. |
-| 6 Client portal and files | Done | The complete end-to-end test passes. Review stopped early at the usage limit; to be rerun. |
-| 7 Zip, daily jobs, deployment | In progress | Task 1 (zip) and Task 2 (cron: 401 without the secret, one reminder, nothing sent twice) done; Task 3 (README, final checks) waits for the review fixes. |
+| 6 Client portal and files | Done | The complete end-to-end test passes. Review in progress (the first run stopped at the usage limit). |
+| 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Final checks: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review in progress. |
 
 ## Commits so far
 
@@ -54,6 +54,7 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `71b13b5` | Phase 7 Task 1: zip download |
 | `1be7bd5` | Phase 7 Task 2: daily reminders and staff digest cron |
 | `d5477f7` | Phase 4 and 5 review fixes |
+| `cff0fb0` | Phase 7 Task 3: README (setup, testing, deployment) |
 
 ## Deviations from the plan
 
