@@ -1,0 +1,67 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { FileText, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
+
+const NAV = [
+  { href: "/app", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/clients", label: "Clients", icon: Users },
+  { href: "/app/templates", label: "Templates", icon: FileText },
+  { href: "/app/settings", label: "Settings", icon: Settings },
+];
+
+export function AppSidebar({ firmName, userName }: { firmName: string; userName: string }) {
+  const pathname = usePathname();
+  const { setOpenMobile } = useSidebar();
+
+  return (
+    <Sidebar>
+      <SidebarHeader>
+        <p className="truncate px-2 py-1 font-semibold">{firmName}</p>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV.map(({ href, label, icon: Icon }) => (
+                <SidebarMenuItem key={href}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={href === "/app" ? pathname === href : pathname.startsWith(href)}
+                  >
+                    <Link href={href} onClick={() => setOpenMobile(false)}>
+                      <Icon />
+                      <span>{label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <p className="truncate px-2 text-sm text-muted-foreground">{userName}</p>
+        <form action="/auth/sign-out" method="post">
+          <SidebarMenuButton type="submit">
+            <LogOut />
+            <span>Sign out</span>
+          </SidebarMenuButton>
+        </form>
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
