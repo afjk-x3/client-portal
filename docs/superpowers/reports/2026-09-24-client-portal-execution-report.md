@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24, after Phase 4
+- **Last updated:** 2026-09-24 21:10 UTC, after Phase 7 Task 2 (Phase 4–5 review fixes in progress)
 
 This report is updated and pushed after every phase, so it stays current if the session ends.
 
@@ -13,11 +13,11 @@ This report is updated and pushed after every phase, so it stays current if the 
 |---|---|---|
 | 1 Foundation | Done | 46 Vitest tests pass; typecheck, lint, build pass. Review findings fixed. Task 2 used hand-written components (see Deviations). |
 | 2 Database | Done | 173 pgTAP tests pass; `db lint` clean. Security review found two Important issues and an account takeover; all fixed in Task 8, which was added to the plan. |
-| 3 Auth and staff shell | Done | End-to-end step 1 passes; typecheck, lint, build pass. Review in progress. |
-| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass; typecheck, lint, build pass. Review in progress. |
-| 5 Requests and review | Not started | |
-| 6 Client portal and files | Not started | |
-| 7 Zip, daily jobs, deployment | Not started | |
+| 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `e865b32`. |
+| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor; fixes being validated. |
+| 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor; fixes being validated. |
+| 6 Client portal and files | Done | The complete end-to-end test passes. Review stopped early at the usage limit; to be rerun. |
+| 7 Zip, daily jobs, deployment | In progress | Task 1 (zip) and Task 2 (cron: 401 without the secret, one reminder, nothing sent twice) done; Task 3 (README, final checks) waits for the review fixes. |
 
 ## Commits so far
 
@@ -47,6 +47,12 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `903c8ce` | Phase 4 Tasks 1–2: clients, contacts, client archive |
 | `76cb18c` | Phase 4 Task 3: templates |
 | `b2c1a00` | Phase 4 Task 4: firm settings and team |
+| `317286c` | Phase 5 Tasks 1–3: request editor, sending, item review |
+| `9a16264` | Phase 6 Tasks 1–3: client portal, direct uploads, submit, downloads |
+| `e865b32` | Phase 3 review fixes |
+| `a70f83f` | Plan updated for the Phase 3 review fixes |
+| `71b13b5` | Phase 7 Task 1: zip download |
+| `1be7bd5` | Phase 7 Task 2: daily reminders and staff digest cron |
 
 ## Deviations from the plan
 
@@ -67,6 +73,11 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **New tests:** 43 (pgTAP now 173), including the reviewer's coverage gaps: contacts writing their own `client_contacts` row, the firm segment on uploads, uploads to closed items, file RPCs on drafts and archived requests, a catalog guard for definer functions and policies, users with both roles, and anon.
   - **Not changed:** a submission racing an archive ends in the same state as submitting just before the archive, so it is not a bug; the reminder reply-to lookup is already limited to the firm's own members.
   - **Deferred:** anyone can add any email as staff, and that person cannot leave or create their own firm. A "Leave firm" action for non-admin staff is planned after Phase 7.
+- **Phase 3** (code review with live probes of the proxy, cookies, sign-out, and Server Actions). No Critical issues. Fixed:
+  - **Auth lookups swallowed query errors (Important).** A failed `firm_members` or `client_contacts` query read as "no membership", so during a database hiccup staff were sent to onboarding. They now throw, and a new root error boundary catches errors from the staff shell's layout, which `app/app/error.tsx` does not cover.
+  - **Shared email limit (Important, deployment).** Supabase Auth has one email-sending limit for the whole project, so sign-in codes for every firm share it. The README's deployment steps now say to raise it, and to consider CAPTCHA if sign-in emails are abused.
+  - **Minor:** the proxy redirects only page loads, so a Server Action whose session expired no longer fails with "An unexpected response was received from the server"; sign-out is per device, clears the cookies itself when Auth is unreachable, and redirects with a relative URL; "Ready for review" leaves out archived requests; sidebar accessibility (`aria-current`, an `inert` collapsed sidebar, `aria-expanded` on the trigger).
+  - **Not changed:** `ensureUser()` keeps a documented contract rather than taking the caller as a parameter, since passing a `Staff` object would not prove the admin role that adding staff needs. A full page load after sign-in (to drop pages kept mounted from an earlier session in the tab) was tried and reverted: it made the first clicks after sign-in race React hydration, and the case it guards against needs a session revoked from elsewhere, now that sign-out is per device and always a full page load.
 
 ## Blockers
 
@@ -79,7 +90,8 @@ This report is updated and pushed after every phase, so it stays current if the 
 - Commit trailers: commits from Tasks 1, 3, and 4 carry `Co-Authored-By: Claude Opus 5.5`. From Task 5 on, subagents use their own environment's attribution (`Claude Sonnet 5`), which is the accurate author.
 - All copied files matched the validated versions byte for byte.
 - Some tasks end without a commit by design (Phase 3 Task 2, Phase 4 Task 1); the next task's commit includes their files.
-- Implementers skip the plan's "check by hand" steps. The same flows are covered by the broader browser suites, which run against this repository after Phase 7.
+- Implementers skip the plan's "check by hand" steps. The same flows are covered by the broader browser suites; the settings, templates, drafts, and open-request suite already passes against this repository.
+- The session hit its 5-hour usage limit at about 20:00 UTC, which stopped the Phase 6 review; work resumed after the reset.
 - Browser runs on the validated copy after the hardening and the new components: the full happy path, the two broader suites (settings, templates, drafts, open-request edits, zip, downloads, redirects, cron), and a phone-width sidebar check all pass.
 - Subagents twice flagged `AGENTS.md` as a possible prompt injection. It is generated by Next.js 16 (`node_modules/next/dist/server/lib/generate-agent-files.js`) and is legitimate.
 
