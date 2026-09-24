@@ -30,6 +30,7 @@
 | `app/onboarding/*` | Firm creation through `create_firm` |
 | `components/data-table.tsx` | Generic DataTable on TanStack Table v9 |
 | `app/app/layout.tsx`, `staff-shell.tsx`, `app-sidebar.tsx`, `error.tsx` | Staff layout and gate |
+| `app/error.tsx` | Root error boundary, which also catches errors in segment layouts |
 | `app/app/page.tsx`, `dashboard-tabs.tsx` | Dashboard with "Waiting on clients" and "Ready for review" |
 | `playwright.config.ts`, `e2e/mailpit.ts`, `e2e/happy-path.spec.ts` | The end-to-end test and its Mailpit helper |
 
@@ -159,7 +160,7 @@ export async function ensureUser(email: string): Promise<string> {
 
 - [ ] **Step 6: Create the auth helpers**
 
-Create `lib/auth.ts`. `cache()` dedupes the lookups within one request. `getContactClientIds()` reads the caller's own `client_contacts` rows (the policy added in Phase 2, Task 3).
+Create `lib/auth.ts`. `cache()` dedupes the lookups within one request. `getContactClientIds()` reads the caller's own `client_contacts` rows (the policy added in Phase 2, Task 3). A failed query throws: read as "no membership", a database hiccup would send staff to onboarding instead of the error page (spec section 12).
 
 ```ts
 import "server-only";
@@ -183,16 +184,17 @@ export const getUser = cache(async () => {
   return { id: data.claims.sub, email: data.claims.email ?? "" };
 });
 
-/** The caller's staff membership, or null. */
+/** The caller's staff membership, or null. A failed query throws, so it never reads as "not staff". */
 export const getStaff = cache(async (): Promise<Staff | null> => {
   const user = await getUser();
   if (!user) return null;
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("firm_members")
     .select("firm_id, role, full_name, email")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (error) throw error;
   if (!data) return null;
   return {
     userId: user.id,
@@ -208,8 +210,9 @@ export const getContactClientIds = cache(async (): Promise<string[]> => {
   const user = await getUser();
   if (!user) return [];
   const supabase = await createClient();
-  const { data } = await supabase.from("client_contacts").select("client_id").eq("user_id", user.id);
-  return (data ?? []).map((row) => row.client_id);
+  const { data, error } = await supabase.from("client_contacts").select("client_id").eq("user_id", user.id);
+  if (error) throw error;
+  return data.map((row) => row.client_id);
 });
 
 /** Where a signed-in user goes when no `next` path is given. */
@@ -238,7 +241,7 @@ export async function requireAdmin(): Promise<Staff> {
 
 - [ ] **Step 7: Create the proxy**
 
-Create `proxy.ts` in the repo root. It must call `getClaims()` right after creating the client, and it never redirects `/api/*`: API handlers check the session themselves, and the cron route uses a bearer secret.
+Create `proxy.ts` in the repo root. It must call `getClaims()` right after creating the client, and it never redirects `/api/*`: API handlers check the session themselves, and the cron route uses a bearer secret. It redirects only page loads (`GET` and `HEAD`): a Server Action cannot follow a redirect to a page, so actions check the session themselves, and `requireStaff()` redirects.
 
 ```ts
 import { NextResponse, type NextRequest } from "next/server";
@@ -246,7 +249,7 @@ import { createServerClient } from "@supabase/ssr";
 
 const SIGNED_IN_ONLY = ["/app", "/portal", "/onboarding"];
 
-/** Refreshes the Supabase session and sends signed-out users to /login. Never redirects /api/*. */
+/** Refreshes the Supabase session and sends signed-out page loads to /login. Never redirects /api/*. */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -273,7 +276,10 @@ export async function proxy(request: NextRequest) {
 
   const { pathname, search } = request.nextUrl;
   const needsSession = SIGNED_IN_ONLY.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (!data && needsSession) {
+  // Only page loads. A Server Action (POST) cannot follow a redirect to a page;
+  // it checks the session itself and redirects through requireStaff().
+  const pageLoad = request.method === "GET" || request.method === "HEAD";
+  if (!data && needsSession && pageLoad) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = `?next=${encodeURIComponent(pathname + search)}`;
@@ -634,20 +640,29 @@ async function LoginFormWithNext({ searchParams }: Pick<PageProps<"/login">, "se
 
 - [ ] **Step 6: Add sign-out**
 
-Create `app/auth/sign-out/route.ts`. Forms post here natively, so the browser does a full page load and no page kept mounted by Cache Components survives into the next user's session.
+Create `app/auth/sign-out/route.ts`. Forms post here natively, so the browser does a full page load and no page kept mounted by Cache Components survives into the next user's session. It signs out this device only (`scope: "local"`), clears the session cookies itself when Auth cannot be reached, and redirects with a relative URL, so it works on any host.
 
 ```ts
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * Signs out, then does a full page load of /login. A full load (not a client
- * navigation) drops every page React kept mounted for the previous user.
+ * Signs this device out, then does a full page load of /login. A full load
+ * (not a client navigation) drops every page React kept mounted for the
+ * previous user. The redirect is relative, so it works on any host.
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
-  await supabase.auth.signOut();
-  return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
+  const { error } = await supabase.auth.signOut({ scope: "local" });
+  const response = new NextResponse(null, { status: 303, headers: { Location: "/login" } });
+  if (error) {
+    // Auth could not be reached, so the client kept its session cookies. Clear them here.
+    console.error("Sign-out failed", error);
+    for (const { name } of request.cookies.getAll()) {
+      if (name.startsWith("sb-")) response.cookies.delete(name);
+    }
+  }
+  return response;
 }
 ```
 
@@ -763,7 +778,7 @@ git commit -m "feat: add landing page, code sign-in, sign-out, and onboarding"
 ## Task 4: Staff shell and dashboard
 
 **Files:**
-- Create: `components/data-table.tsx`, `app/app/layout.tsx`, `app/app/staff-shell.tsx`, `app/app/app-sidebar.tsx`, `app/app/error.tsx`, `app/app/page.tsx`, `app/app/dashboard-tabs.tsx`
+- Create: `components/data-table.tsx`, `app/app/layout.tsx`, `app/app/staff-shell.tsx`, `app/app/app-sidebar.tsx`, `app/app/error.tsx`, `app/error.tsx`, `app/app/page.tsx`, `app/app/dashboard-tabs.tsx`
 
 - [ ] **Step 1: Add the DataTable**
 
@@ -878,7 +893,7 @@ export async function StaffShell({ children }: { children: ReactNode }) {
 }
 ```
 
-Create `app/app/app-sidebar.tsx`. On phones the sidebar is a Sheet, so each link also closes it; otherwise it would stay open over the page you navigated to.
+Create `app/app/app-sidebar.tsx`. On phones the sidebar is a Sheet, so each link also closes it; otherwise it would stay open over the page you navigated to. The current page's link has `aria-current="page"`.
 
 ```tsx
 "use client";
@@ -919,19 +934,23 @@ export function AppSidebar({ firmName, userName }: { firmName: string; userName:
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV.map(({ href, label, icon: Icon }) => (
-                <SidebarMenuItem key={href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={href === "/app" ? pathname === href : pathname.startsWith(href)}
-                  >
-                    <Link href={href} onClick={() => setOpenMobile(false)}>
-                      <Icon />
-                      <span>{label}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {NAV.map(({ href, label, icon: Icon }) => {
+                const active = href === "/app" ? pathname === href : pathname.startsWith(href);
+                return (
+                  <SidebarMenuItem key={href}>
+                    <SidebarMenuButton asChild isActive={active}>
+                      <Link
+                        href={href}
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => setOpenMobile(false)}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -973,9 +992,36 @@ export default function StaffError({ error, retry }: { error: Error & { digest?:
 }
 ```
 
+Create `app/error.tsx`. An error boundary does not catch errors thrown by its own segment's layout, so an error in the staff shell (rendered by `app/app/layout.tsx`) reaches this root boundary instead of `app/app/error.tsx`.
+
+```tsx
+"use client";
+
+import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
+
+/**
+ * Catches what no nested boundary does, including errors thrown by a
+ * segment's own layout, such as the staff shell in app/app/layout.tsx.
+ */
+export default function RootError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
+  useEffect(() => {
+    console.error(error);
+  }, [error]);
+
+  return (
+    <main className="mx-auto flex w-full max-w-md flex-col items-start gap-4 p-6">
+      <h1 className="text-lg font-semibold">Something went wrong</h1>
+      <p className="text-sm text-muted-foreground">Try again. If it keeps happening, contact support.</p>
+      <Button onClick={() => retry()}>Try again</Button>
+    </main>
+  );
+}
+```
+
 - [ ] **Step 3: Add the dashboard**
 
-Create `app/app/page.tsx`. Staff queries always add `.eq("firm_id", staff.firmId)`: a user who is also a contact at another firm can see that firm's requests through the contact policy, and they do not belong on this dashboard. The `!inner` embed with `.in("request_items.status", …)` returns only open items and drops requests that have none.
+Create `app/app/page.tsx`. Staff queries always add `.eq("firm_id", staff.firmId)`: a user who is also a contact at another firm can see that firm's requests through the contact policy, and they do not belong on this dashboard. The `!inner` embed with `.in("request_items.status", …)` returns only open items and drops requests that have none. "Ready for review" leaves out archived requests the same way.
 
 ```tsx
 import { Suspense } from "react";
@@ -1008,11 +1054,13 @@ async function Dashboard() {
       .eq("status", "open")
       .in("request_items.status", ["requested", "needs_changes"])
       .order("due_date"),
+    // Submitted items of open and completed requests; archived requests are closed.
     supabase
       .from("request_items")
-      .select("id, title, submitted_at, request_id, requests(title, clients(name))")
+      .select("id, title, submitted_at, request_id, requests!inner(title, clients(name))")
       .eq("firm_id", staff.firmId)
       .eq("status", "submitted")
+      .neq("requests.status", "archived")
       .order("submitted_at"),
   ]);
   if (waiting.error) throw waiting.error;
@@ -1031,8 +1079,8 @@ async function Dashboard() {
       }))}
       ready={ready.data.map((item) => ({
         requestId: item.request_id,
-        client: item.requests?.clients?.name ?? "",
-        request: item.requests?.title ?? "",
+        client: item.requests.clients?.name ?? "",
+        request: item.requests.title,
         item: item.title,
         submittedAt: item.submitted_at ?? "",
       }))}

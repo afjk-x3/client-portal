@@ -431,6 +431,7 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
    - Keep "Confirm email" on (the default). With it off, anyone could sign up with a password for someone else's address and get a session.
    - Replace the "Magic Link" and "Confirm signup" email templates with `supabase/templates/sign-in-code.html`. It shows `{{ .Token }}` and no link.
    - Configure custom SMTP with Resend.
+   - Under Rate Limits, raise the email sending limit to your expected peak. Sign-in codes for every firm share this one limit, and the default is low. If sign-in emails are abused, turn on CAPTCHA protection (the sign-in form then needs a CAPTCHA widget).
    - Set the Site URL to the production domain.
 3. In Resend, verify the domain of `EMAIL_FROM`.
 4. In Vercel, set every variable above (use a long random `CRON_SECRET`) and deploy. `vercel.json` schedules `/api/cron/daily` at 13:00 UTC. On the Hobby plan it runs once at some point within that hour.
