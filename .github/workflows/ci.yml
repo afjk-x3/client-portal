@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: Unit tests, types, lint, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  database-and-e2e:
+    name: Database and end-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start local Supabase
+        run: npx supabase start
+      - name: Database tests
+        run: npm run test:db
+      - name: Point the app at local Supabase
+        run: |
+          npx supabase status -o json > "$RUNNER_TEMP/supabase.json"
+          node -e '
+            const fs = require("fs");
+            const status = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const env = fs.readFileSync(".env.example", "utf8")
+              .replace(/^NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=.*$/m, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${status.PUBLISHABLE_KEY}`)
+              .replace(/^SUPABASE_SECRET_KEY=.*$/m, `SUPABASE_SECRET_KEY=${status.SECRET_KEY}`);
+            fs.writeFileSync(".env.local", env);
+          ' "$RUNNER_TEMP/supabase.json"
+      - run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
