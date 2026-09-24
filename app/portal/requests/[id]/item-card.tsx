@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState, type DragEvent } from "react";
+import { useActionState, useEffect, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
@@ -65,32 +65,54 @@ function formatSize(bytes: number) {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Section 10.5: create a signed URL, upload straight to Storage, then register the file. */
-async function uploadOne(itemId: string, file: File): Promise<string | null> {
-  const type = uploadMimeType(file);
-  if (!type) return "This file type is not accepted.";
-  if (file.size > MAX_FILE_BYTES) return "Files must be 25 MB or smaller.";
+/** Why a file can never be uploaded (so retrying cannot help), or null. */
+function rejection(file: File): string | null {
+  if (!uploadMimeType(file)) return `${file.name}: this file type is not accepted.`;
+  if (file.size > MAX_FILE_BYTES) return `${file.name}: files must be 25 MB or smaller.`;
+  return null;
+}
 
+/**
+ * Section 10.5: create a signed URL, upload straight to Storage, then register
+ * the file. Returns an error message, or null when the file is registered.
+ */
+async function uploadOne(itemId: string, file: File): Promise<string | null> {
+  const type = uploadMimeType(file)!;
   const created = await createUploadUrl(itemId, file.name);
   if (!created.ok) return created.error;
   const { path, token } = created.data!;
 
+  const storage = createClient().storage.from("documents");
   const body = type === file.type ? file : new File([file], file.name, { type });
-  const { error } = await createClient().storage.from("documents").uploadToSignedUrl(path, token, body, {
-    contentType: type,
-  });
+  const { error } = await storage.uploadToSignedUrl(path, token, body, { contentType: type });
   if (error) return "Upload failed. Check your connection and retry.";
 
-  // ponytail: the object is orphaned if register_file fails after the upload.
-  // Upgrade path: a nightly cleanup of objects that have no item_files row.
   const registered = await registerFile(itemId, path, file.name);
-  return registered.ok ? null : registered.error;
+  if (registered.ok) return null;
+  // The object is not registered, so the contact may still delete it; a retry uploads it again.
+  // ponytail: the object is orphaned if this delete fails too. Upgrade path: a nightly
+  // cleanup of objects that have no item_files row.
+  await storage.remove([path]);
+  return registered.error;
 }
 
 function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
+
+  // A file dropped outside the drop zone would replace the page, and uploads in progress with it.
+  useEffect(() => {
+    function ignoreFileDrop(event: globalThis.DragEvent) {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    }
+    window.addEventListener("dragover", ignoreFileDrop);
+    window.addEventListener("drop", ignoreFileDrop);
+    return () => {
+      window.removeEventListener("dragover", ignoreFileDrop);
+      window.removeEventListener("drop", ignoreFileDrop);
+    };
+  }, []);
 
   function update(key: string, patch: Partial<Upload> | null) {
     setUploads((current) =>
@@ -100,17 +122,29 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
 
   // One file at a time, in the order they were added.
   function enqueue(upload: Upload) {
-    queue.current = queue.current.then(async () => {
+    async function run() {
       update(upload.key, { status: "uploading", error: undefined });
-      const error = await uploadOne(item.id, upload.file);
+      let error: string | null;
+      try {
+        error = await uploadOne(item.id, upload.file);
+      } catch {
+        // A dropped connection or a new deployment makes the action call throw.
+        error = "Upload failed. Check your connection and retry.";
+      }
       update(upload.key, error ? { status: "failed", error } : null);
-    });
+    }
+    queue.current = queue.current.then(run, run);
   }
 
   const room = MAX_FILES_PER_ITEM - item.files.length - uploads.length;
 
   function addFiles(files: FileList | null) {
-    const picked = Array.from(files ?? []);
+    const picked: File[] = [];
+    for (const file of Array.from(files ?? [])) {
+      const reason = rejection(file);
+      if (reason) toast.error(reason);
+      else picked.push(file);
+    }
     if (picked.length > room) toast.error(`An item can have at most ${MAX_FILES_PER_ITEM} files.`);
     const added = picked
       .slice(0, Math.max(0, room))
@@ -137,11 +171,17 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
                 {file.filename} <span className="text-muted-foreground">({formatSize(file.sizeBytes)})</span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <a className="underline" href={`/api/files/${file.id}?download=1`}>
+                <a className="underline" href={`/api/files/${file.id}?download=1`} aria-label={`Download ${file.filename}`}>
                   Download
                 </a>
                 {editable && (
-                  <ActionButton variant="ghost" size="sm" action={() => removeFile(file.id)} success="File removed.">
+                  <ActionButton
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove ${file.filename}`}
+                    action={() => removeFile(file.id)}
+                    success="File removed."
+                  >
                     Remove
                   </ActionButton>
                 )}
@@ -151,19 +191,32 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         </ul>
       )}
       {uploads.length > 0 && (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-3" aria-live="polite">
           {uploads.map((upload) => (
-            <li key={upload.key} className="flex items-center justify-between gap-2 text-sm">
+            <li key={upload.key} className="flex flex-col gap-1 text-sm">
               <span className="truncate">{upload.file.name}</span>
               {upload.status === "failed" ? (
-                <span className="flex shrink-0 items-center gap-2 text-destructive">
-                  {upload.error}
-                  <Button variant="outline" size="sm" onClick={() => enqueue(upload)}>
+                <span className="flex flex-wrap items-center gap-2 text-destructive">
+                  <span>{upload.error}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Retry ${upload.file.name}`}
+                    onClick={() => enqueue(upload)}
+                  >
                     Retry
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Dismiss ${upload.file.name}`}
+                    onClick={() => update(upload.key, null)}
+                  >
+                    Dismiss
                   </Button>
                 </span>
               ) : (
-                <span className="shrink-0 text-muted-foreground">
+                <span className="text-muted-foreground">
                   {upload.status === "uploading" ? "Uploading…" : "Waiting…"}
                 </span>
               )}
@@ -179,7 +232,7 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
-          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm ${
+          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm focus-within:ring-[3px] focus-within:ring-ring/50 ${
             dragging ? "bg-muted" : ""
           }`}
         >
@@ -201,6 +254,7 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         <ActionButton
           className="self-start"
           disabled={item.files.length === 0 || busy}
+          aria-label={`Submit ${item.title}`}
           action={() => submitItem(item.id)}
           success="Submitted. We'll let you know if anything else is needed."
         >
@@ -232,7 +286,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         rows={4}
         required
       />
-      <Button type="submit" className="self-start" disabled={pending}>
+      <Button type="submit" className="self-start" disabled={pending} aria-label={`Submit ${item.title}`}>
         Submit
       </Button>
     </form>

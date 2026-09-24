@@ -5,7 +5,7 @@ import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { storagePath } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
-import { filenameSchema, textAnswerSchema } from "@/lib/validation";
+import { filenameSchema, isId, textAnswerSchema } from "@/lib/validation";
 
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
@@ -20,6 +20,7 @@ export async function createUploadUrl(
   itemId: string,
   filename: string,
 ): Promise<ActionResult<{ path: string; token: string }>> {
+  if (!isId(itemId)) return fail(notFound);
   const name = filenameSchema.safeParse(filename);
   if (!name.success) return invalid(name.error);
 
@@ -52,6 +53,7 @@ export async function createUploadUrl(
 }
 
 export async function registerFile(itemId: string, path: string, filename: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
   const name = filenameSchema.safeParse(filename);
   if (!name.success) return invalid(name.error);
 
@@ -68,15 +70,17 @@ export async function registerFile(itemId: string, path: string, filename: strin
 }
 
 export async function removeFile(fileId: string): Promise<ActionResult> {
+  if (!isId(fileId)) return fail(notFound);
   const supabase = await createClient();
   const { data: path, error } = await supabase.rpc("remove_file", { file_id: fileId });
   if (error) return fail(error);
 
-  const { error: storageError } = await supabase.storage.from("documents").remove([path]);
-  if (storageError) {
+  // Storage reports a refused delete as success with no rows, not as an error.
+  const { data: removed, error: storageError } = await supabase.storage.from("documents").remove([path]);
+  if (storageError || removed.length === 0) {
     // ponytail: the object is orphaned when this delete fails after remove_file.
     // Upgrade path: a nightly cleanup of objects that have no item_files row.
-    console.error("Storage delete failed after remove_file", storageError);
+    console.error("Storage delete failed after remove_file", storageError ?? path);
   }
 
   revalidateRequestPages();
@@ -85,6 +89,7 @@ export async function removeFile(fileId: string): Promise<ActionResult> {
 
 /** File items pass no answer; text items pass the answer. */
 export async function submitItem(itemId: string, answer?: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
   let textAnswer: string | undefined;
   if (answer !== undefined) {
     const parsed = textAnswerSchema.safeParse(answer);

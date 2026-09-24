@@ -23,10 +23,9 @@ export default function PortalPage() {
 type Row = { id: string; title: string; status: string; dueDate: string; progress: number };
 
 async function Requests() {
+  const empty = <p className="text-sm text-muted-foreground">You don&apos;t have any requests yet.</p>;
   const clientIds = await getContactClientIds();
-  if (clientIds.length === 0) {
-    return <p className="text-sm text-muted-foreground">You don&apos;t have any requests yet.</p>;
-  }
+  if (clientIds.length === 0) return empty;
 
   const supabase = await createClient();
   const { data: requests, error } = await supabase
@@ -36,6 +35,7 @@ async function Requests() {
     .neq("status", "draft")
     .order("due_date");
   if (error) throw error;
+  if (requests.length === 0) return empty;
 
   const firms = new Map<string, { name: string; open: Row[]; past: Row[] }>();
   for (const request of requests) {
