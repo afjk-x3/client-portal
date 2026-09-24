@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24, all phases implemented and Phase 3–6 review fixes applied; Phase 7 review in progress
+- **Last updated:** 2026-09-24, all phases and Phase 3–6 review fixes done, plus additions beyond the plan; Phase 7 review in progress
 
 This report is updated and pushed after every phase, so it stays current if the session ends.
 
@@ -56,6 +56,9 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `d5477f7` | Phase 4 and 5 review fixes |
 | `cff0fb0` | Phase 7 Task 3: README (setup, testing, deployment) |
 | `eb8372c` | Phase 6 review fixes |
+| `3c7aac9` | Addition: staff can leave their firm |
+| `3e4a85f` | Addition: end-to-end suites for staff workflows, the portal, and editing safeguards |
+| `749c3c1` | Addition: CI workflow |
 
 ## Deviations from the plan
 
@@ -98,6 +101,12 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **Contacts could choose the saved extension (Important).** The bucket checks only the declared type, and `register_file` stored names as given, so a PDF registered as `statement.pdf     .js` downloaded as a script. `register_file` now keeps only an extension that matches the stored type and appends the type's own otherwise (migration `20260925000900_file_names.sql`, 5 new pgTAP tests).
   - **Phone layout (Important).** A failed upload row pushed the page wider than a 375 px screen and hid the file name; failed rows now wrap.
   - **Minor:** unusable files are refused before queueing, failed rows can be dismissed, a failed registration deletes its upload (no orphans on retry), files dropped outside the drop zone are ignored, the orphan log also catches Storage's silent refusals, the portal shows an empty state when a contact has no sent requests, and buttons name their file or item for screen readers.
+
+## Additions beyond the plan
+
+- **Leave firm.** Admins add staff without the person's consent, and a user belongs to one firm at most, so someone added by mistake, or on purpose, could never set up their own firm (a Phase 2 review finding). Staff who are not admins can now leave from Settings; an admin must first be made staff by another admin, so every firm keeps one. A delete policy on the caller's own staff row (migration `20260925001000_leave_firm.sql`, 5 pgTAP tests) and a confirm dialog that ends in a full page load.
+- **End-to-end suites.** The reviews found flows that only a browser covers. Besides the plan's happy path, `npm run test:e2e` now runs staff workflows (settings, team, leaving a firm, templates, drafts, open-request edits, archive, sign-out), the portal and review loop (uploads, review, zip, exact download names, access rules, users who are both staff and contacts, the cron), and editing safeguards (typed values survive errors; pages kept mounted stay correct). Playwright runs one worker, because the specs share a database and the cron checks count every firm.
+- **Continuous integration.** `.github/workflows/ci.yml` runs two jobs on every push and pull request: Vitest, typecheck, lint, and build; then local Supabase with the pgTAP suite and the Playwright suites against a production build (`next build && next start`, chosen in `playwright.config.ts` when `CI` is set). The production-build run was checked locally: 4 passed.
 
 ## Blockers
 
