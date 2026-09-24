@@ -14,16 +14,18 @@ export function escapeHtml(value: string): string {
 
 /** Absolute link to an app page. Emails never link to auth tokens. */
 export function siteUrl(path: string): string {
-  return new URL(path, process.env.NEXT_PUBLIC_SITE_URL).toString();
+  const base = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!base) throw new Error("NEXT_PUBLIC_SITE_URL is not set");
+  return new URL(path, base).toString();
 }
 
 function subjectLine(value: string): string {
   return value.replace(/[\r\n]+/g, " ");
 }
 
-/** Wraps already-escaped HTML paragraphs and one link. */
-function html(paragraphs: string[], link: { href: string; label: string }): string {
-  const body = paragraphs.map((p) => `<p>${p}</p>`).join("");
+/** Wraps already-escaped HTML blocks and one link. Lists are not wrapped in <p>. */
+function html(blocks: string[], link: { href: string; label: string }): string {
+  const body = blocks.map((block) => (block.startsWith("<ul>") ? block : `<p>${block}</p>`)).join("");
   return (
     `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#111">` +
     `${body}<p><a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a></p></div>`
@@ -84,7 +86,7 @@ export function needsChangesEmail(input: {
     html: html(
       [
         `${escapeHtml(input.firmName)} asked for changes to <strong>${escapeHtml(input.itemTitle)}</strong>:`,
-        escapeHtml(input.note),
+        escapeHtml(input.note).replace(/\r?\n/g, "<br>"),
       ],
       { href: link, label: "Open the request" },
     ),
@@ -135,11 +137,11 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
     html: html(
       [
         `Clients submitted ${count} ${noun} since the last digest:`,
-        ...input.groups.map(
-          (group) =>
-            `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
-            `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>${list(group.items)}`,
-        ),
+        ...input.groups.flatMap((group) => [
+          `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
+            `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
+          list(group.items),
+        ]),
       ],
       { href: dashboard, label: "Open the dashboard" },
     ),

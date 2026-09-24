@@ -16,8 +16,8 @@ const MESSAGES: Record<string, string> = {
  * maps a SQLSTATE code to a message for one call site.
  */
 export function errorMessage(error: SupabaseError, overrides: Record<string, string> = {}): string {
-  if (error?.code && overrides[error.code]) return overrides[error.code];
-  if (error && MESSAGES[error.message]) return MESSAGES[error.message];
+  if (error?.code && Object.hasOwn(overrides, error.code)) return overrides[error.code];
+  if (error && Object.hasOwn(MESSAGES, error.message)) return MESSAGES[error.message];
   if (error?.code === "42501" || error?.code === "23503") return MESSAGES.not_allowed;
   if (error?.code === "23505") return "That already exists.";
   if (error?.code === "23514") return "A value is empty or too long.";

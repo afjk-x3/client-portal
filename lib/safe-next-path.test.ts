@@ -6,6 +6,10 @@ describe("safeNextPath", () => {
     expect(safeNextPath(path)).toBe(path);
   });
 
+  it("resolves dot segments", () => {
+    expect(safeNextPath("/app/./clients/../templates")).toBe("/app/templates");
+  });
+
   it.each([
     null,
     undefined,
@@ -16,6 +20,9 @@ describe("safeNextPath", () => {
     "/\\evil.example",
     "/\t/evil.example",
     "/app\n",
+    "/.//evil.example",
+    "/..//evil.example",
+    "/%2e%2e//evil.example",
   ])("rejects %j", (path) => {
     expect(safeNextPath(path)).toBeNull();
   });

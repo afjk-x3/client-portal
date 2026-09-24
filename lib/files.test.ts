@@ -10,8 +10,10 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("my tax/return (1)é.pdf")).toBe("my_tax_return__1__.pdf");
   });
 
-  it("truncates to 100 characters", () => {
-    expect(sanitizeFilename(`${"a".repeat(150)}.pdf`)).toHaveLength(100);
+  it("keeps at most 100 characters without losing the extension", () => {
+    const safe = sanitizeFilename(`${"a".repeat(150)}.pdf`);
+    expect(safe).toHaveLength(100);
+    expect(safe.endsWith(".pdf")).toBe(true);
   });
 
   it("never returns an empty name", () => {
@@ -37,6 +39,10 @@ describe("uploadMimeType", () => {
   it("rejects other types", () => {
     expect(uploadMimeType({ name: "run.exe", type: "application/x-msdownload" })).toBeNull();
   });
+
+  it.each(["x.constructor", "x.__proto__", "pdf", ".pdf"])("rejects %j", (name) => {
+    expect(uploadMimeType({ name, type: "" })).toBeNull();
+  });
 });
 
 describe("zipEntryNames", () => {
@@ -48,5 +54,14 @@ describe("zipEntryNames", () => {
         { itemNumber: 12, itemTitle: "W-2 / 1099", filename: "a:b.pdf" },
       ]),
     ).toEqual(["01 Photo ID/scan.pdf", "01 Photo ID/scan (2).pdf", "12 W-2 _ 1099/a_b.pdf"]);
+  });
+
+  it("keeps the extension of long names and never uses . or ..", () => {
+    const [long, dots] = zipEntryNames([
+      { itemNumber: 1, itemTitle: "Statements", filename: `${"s".repeat(120)}.pdf` },
+      { itemNumber: 1, itemTitle: "Statements", filename: ".." },
+    ]);
+    expect(long).toBe(`01 Statements/${"s".repeat(96)}.pdf`);
+    expect(dots).toBe("01 Statements/untitled");
   });
 });
