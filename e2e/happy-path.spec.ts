@@ -39,4 +39,16 @@ test("a firm collects a document from a client", async ({ browser }) => {
   await contactDialog.getByRole("textbox", { name: "Email" }).fill(contactEmail);
   await contactDialog.getByRole("button", { name: "Add contact" }).click();
   await expect(staff.getByRole("cell", { name: contactEmail })).toBeVisible();
+
+  // 3. Staff sends a request with one required item.
+  await staff.getByRole("link", { name: "New request" }).click();
+  await staff.getByRole("textbox", { name: "Title", exact: true }).fill("2026 tax documents");
+  await staff.getByRole("button", { name: "Due date" }).click();
+  await staff.getByRole("button", { name: "Go to the Next Month" }).click();
+  await staff.getByRole("button", { name: /15th/ }).click();
+  await staff.getByRole("button", { name: "Add item" }).click();
+  await staff.getByRole("textbox", { name: "Item 1 title" }).fill("Photo ID");
+  await staff.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(staff).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
+  await expect(staff.getByText("Open", { exact: true })).toBeVisible();
 });
