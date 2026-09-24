@@ -688,6 +688,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { createFirm } from "./actions";
 
@@ -702,11 +703,11 @@ export function OnboardingForm() {
     <form action={formAction} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <Label htmlFor="firmName">Firm name</Label>
-        <Input id="firmName" name="firmName" maxLength={120} required autoFocus />
+        <Input id="firmName" name="firmName" maxLength={LIMITS.firmName} required autoFocus />
       </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor="fullName">Your full name</Label>
-        <Input id="fullName" name="fullName" maxLength={200} autoComplete="name" required />
+        <Input id="fullName" name="fullName" maxLength={LIMITS.name} autoComplete="name" required />
       </div>
       <Button type="submit" disabled={pending}>
         {pending ? "Creating…" : "Create firm"}

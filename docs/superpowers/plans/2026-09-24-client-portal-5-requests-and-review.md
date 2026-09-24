@@ -108,6 +108,7 @@ Create `app/app/requests/actions.ts`. Rules it enforces, from spec section 7.3:
 - `updateRequestDetails` and `addItem` work only on `open` or `completed` requests. A new required item reopens a completed request through the trigger.
 - `removeItem` works only while the item is `requested` and has no files.
 - `acceptItem` accepts from any state except `accepted`, which covers paper copies. `returnItem` needs a note and works from `submitted` or `accepted`; it emails every contact with reply-to set to the reviewer.
+- `sendRequest` and `returnItem` build their emails before the guarded update, so a configuration error (for example a missing `NEXT_PUBLIC_SITE_URL`) changes nothing.
 - `setRequestArchived(…, false)` reopens and then calls `refresh_request_status`.
 
 ```ts
@@ -190,17 +191,7 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     return { ok: false, error: "Add at least one required item before sending." };
   }
 
-  const { data: sent, error } = await supabase
-    .from("requests")
-    .update({ status: "open", sent_at: new Date().toISOString() })
-    .eq("id", requestId)
-    .eq("firm_id", staff.firmId)
-    .eq("status", "draft")
-    .select("id")
-    .maybeSingle();
-  if (error) return fail(error);
-  if (!sent) return fail(staleState);
-
+  // Build the emails before changing anything, so a configuration error leaves the draft as is.
   const [{ data: contacts }, { data: firm }] = await Promise.all([
     supabase.from("client_contacts").select("email").eq("client_id", request.client_id),
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
@@ -214,6 +205,18 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     requestId,
   });
   const messages = (contacts ?? []).map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+
+  const { data: sent, error } = await supabase
+    .from("requests")
+    .update({ status: "open", sent_at: new Date().toISOString() })
+    .eq("id", requestId)
+    .eq("firm_id", staff.firmId)
+    .eq("status", "draft")
+    .select("id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!sent) return fail(staleState);
+
   after(() => sendEmails(messages));
 
   revalidatePath(`/app/requests/${requestId}`);
@@ -357,7 +360,24 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
   if (!note.success) return invalid(note.error);
 
   const supabase = await createClient();
-  const { data: item, error } = await supabase
+  const { data: item } = await supabase
+    .from("request_items")
+    .select("title, request_id, requests(client_id)")
+    .eq("id", itemId)
+    .eq("firm_id", staff.firmId)
+    .maybeSingle();
+  if (!item) return fail(notFound);
+
+  // Build the emails before changing anything, so a configuration error leaves the item as is.
+  const [{ data: contacts }, { data: firm }] = await Promise.all([
+    supabase.from("client_contacts").select("email").eq("client_id", item.requests?.client_id ?? ""),
+    supabase.from("firms").select("name").eq("id", staff.firmId).single(),
+  ]);
+  const firmName = firm?.name ?? "";
+  const content = needsChangesEmail({ firmName, itemTitle: item.title, note: note.data, requestId: item.request_id });
+  const messages = (contacts ?? []).map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+
+  const { data: returned, error } = await supabase
     .from("request_items")
     .update({
       status: "needs_changes",
@@ -368,18 +388,11 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
     .eq("id", itemId)
     .eq("firm_id", staff.firmId)
     .in("status", ["submitted", "accepted"])
-    .select("title, request_id, requests(client_id)")
+    .select("id")
     .maybeSingle();
   if (error) return fail(error);
-  if (!item) return fail(staleState);
+  if (!returned) return fail(staleState);
 
-  const [{ data: contacts }, { data: firm }] = await Promise.all([
-    supabase.from("client_contacts").select("email").eq("client_id", item.requests?.client_id ?? ""),
-    supabase.from("firms").select("name").eq("id", staff.firmId).single(),
-  ]);
-  const firmName = firm?.name ?? "";
-  const content = needsChangesEmail({ firmName, itemTitle: item.title, note: note.data, requestId: item.request_id });
-  const messages = (contacts ?? []).map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
   after(() => sendEmails(messages));
 
   revalidatePath(`/app/requests/${item.request_id}`);
@@ -493,6 +506,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { DatePicker } from "@/components/date-picker";
 import { ItemEditor } from "@/components/item-editor";
+import { LIMITS } from "@/lib/constants";
 import { newEditorItem, toItemInputs, type EditorItem } from "@/lib/editor-items";
 import {
   AlertDialog,
@@ -597,7 +611,7 @@ export function RequestEditor({
       <div className="grid gap-4 sm:grid-cols-[1fr_16rem]">
         <div className="flex flex-col gap-2">
           <Label htmlFor={`${id}-title`}>Title</Label>
-          <Input id={`${id}-title`} value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
+          <Input id={`${id}-title`} value={title} maxLength={LIMITS.name} onChange={(e) => setTitle(e.target.value)} />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor={`${id}-due-date`}>Due date</Label>
@@ -747,6 +761,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { addItem, setRequestArchived, updateRequestDetails } from "../actions";
 
@@ -819,7 +834,7 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="request-title">Title</Label>
-            <Input id="request-title" name="title" defaultValue={title} maxLength={200} required />
+            <Input id="request-title" name="title" defaultValue={title} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="request-due">Due date</Label>
@@ -854,11 +869,11 @@ function AddItemDialog({ requestId }: { requestId: string }) {
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="item-title">Title</Label>
-            <Input id="item-title" name="title" maxLength={200} required />
+            <Input id="item-title" name="title" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="item-description">Details (optional)</Label>
-            <Textarea id="item-description" name="description" maxLength={2000} rows={3} />
+            <Textarea id="item-description" name="description" maxLength={LIMITS.description} rows={3} />
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <Select name="kind" defaultValue="file">
@@ -904,6 +919,7 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { LIMITS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/dates";
 import type { ActionResult } from "@/lib/errors";
 import { acceptItem, removeItem, returnItem } from "../actions";
@@ -1051,7 +1067,7 @@ function NeedsChangesForm({ itemId }: { itemId: string }) {
   return (
     <form action={formAction} className="flex flex-col gap-2">
       <Label htmlFor="review-note">What needs to change?</Label>
-      <Textarea id="review-note" name="note" maxLength={1000} rows={3} required />
+      <Textarea id="review-note" name="note" maxLength={LIMITS.reviewNote} rows={3} required />
       <Button type="submit" variant="outline" disabled={pending}>
         Needs changes
       </Button>

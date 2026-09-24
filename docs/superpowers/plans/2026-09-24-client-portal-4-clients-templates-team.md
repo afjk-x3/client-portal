@@ -153,6 +153,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 
 export type Member = { userId: string; fullName: string };
@@ -204,7 +205,7 @@ export function ClientFormDialog({
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="client-name">Name</Label>
-            <Input id="client-name" name="name" defaultValue={initial?.name} maxLength={200} required />
+            <Input id="client-name" name="name" defaultValue={initial?.name} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="client-kind">Type</Label>
@@ -597,6 +598,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { addContact, removeContact } from "./actions";
 
@@ -661,7 +663,7 @@ function AddContactDialog({ clientId }: { clientId: string }) {
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="contact-name">Full name</Label>
-            <Input id="contact-name" name="fullName" maxLength={200} required />
+            <Input id="contact-name" name="fullName" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="contact-email">Email</Label>
@@ -914,7 +916,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
+import { LIMITS, MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
 import { newEditorItem, type EditorItem } from "@/lib/editor-items";
 
 /** Ordered list of checklist items. Shared by the request and template editors. */
@@ -941,14 +943,14 @@ export function ItemEditor({ items, onChange }: { items: EditorItem[]; onChange:
                 aria-label={`Item ${index + 1} title`}
                 placeholder="What do you need?"
                 value={item.title}
-                maxLength={200}
+                maxLength={LIMITS.name}
                 onChange={(e) => update(index, { title: e.target.value })}
               />
               <Textarea
                 aria-label={`Item ${index + 1} description`}
                 placeholder="Details for the client (optional)"
                 value={item.description}
-                maxLength={2000}
+                maxLength={LIMITS.description}
                 rows={2}
                 onChange={(e) => update(index, { description: e.target.value })}
               />
@@ -1165,6 +1167,7 @@ Create `app/app/templates/template-editor.tsx`. The input id comes from `useId()
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ItemEditor } from "@/components/item-editor";
+import { LIMITS } from "@/lib/constants";
 import { toItemInputs, type EditorItem } from "@/lib/editor-items";
 import {
   AlertDialog,
@@ -1211,7 +1214,7 @@ export function TemplateEditor({
     <div className="flex max-w-3xl flex-col gap-6">
       <div className="flex flex-col gap-2">
         <Label htmlFor={`${id}-name`}>Name</Label>
-        <Input id={`${id}-name`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
+        <Input id={`${id}-name`} value={name} maxLength={LIMITS.name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">Items</h2>
@@ -1315,7 +1318,7 @@ git commit -m "feat: add template list and editor"
 
 - [ ] **Step 1: Add the settings actions**
 
-Create `app/app/settings/actions.ts`. `addStaff` follows spec section 10.2: confirm the caller is an admin, `ensureUser()`, insert the membership (RLS allows admins only), then send the `staff_added` email in `after()`. The unique `user_id` constraint produces "This person already belongs to a firm." `changeRole` and `removeStaff` exclude the caller's own row; RLS enforces the same rule.
+Create `app/app/settings/actions.ts`. `addStaff` follows spec section 10.2: confirm the caller is an admin, `ensureUser()`, insert the membership (RLS allows admins only), then send the `staff_added` email in `after()`. The email is built before anything changes, so a configuration error adds nobody. The unique `user_id` constraint produces "This person already belongs to a firm." `changeRole` and `removeStaff` exclude the caller's own row; RLS enforces the same rule.
 
 ```ts
 "use server";
@@ -1355,8 +1358,13 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
   const parsed = staffSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
-  const userId = await ensureUser(parsed.data.email);
   const supabase = await createClient();
+  // Build the email before changing anything, so a configuration error adds nobody.
+  const { data: firm } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
+  const firmName = firm?.name ?? "";
+  const content = staffAddedEmail({ firmName, adminName: admin.fullName });
+
+  const userId = await ensureUser(parsed.data.email);
   const { error } = await supabase.from("firm_members").insert({
     firm_id: admin.firmId,
     user_id: userId,
@@ -1366,9 +1374,6 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
   });
   if (error) return fail(error, { "23505": "This person already belongs to a firm." });
 
-  const { data: firm } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
-  const firmName = firm?.name ?? "";
-  const content = staffAddedEmail({ firmName, adminName: admin.fullName });
   after(() =>
     sendEmails([{ ...content, to: parsed.data.email, fromName: firmName, replyTo: admin.email }]),
   );
@@ -1426,6 +1431,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { renameFirm } from "./actions";
 
@@ -1441,7 +1447,7 @@ export function FirmNameForm({ name, editable }: { name: string; editable: boole
     <form action={formAction} className="flex max-w-md flex-col gap-2">
       <Label htmlFor="firm-name">Firm name</Label>
       <div className="flex gap-2">
-        <Input id="firm-name" name="name" defaultValue={name} maxLength={120} required disabled={!editable} />
+        <Input id="firm-name" name="name" defaultValue={name} maxLength={LIMITS.firmName} required disabled={!editable} />
         {editable && (
           <Button type="submit" disabled={pending}>
             Save
@@ -1488,6 +1494,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { addStaff, changeRole, removeStaff } from "./actions";
 
@@ -1617,7 +1624,7 @@ function AddStaffDialog() {
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="staff-name">Full name</Label>
-            <Input id="staff-name" name="fullName" maxLength={200} required />
+            <Input id="staff-name" name="fullName" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="staff-email">Email</Label>

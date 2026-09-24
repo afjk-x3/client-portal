@@ -19,7 +19,7 @@
 |---|---|
 | `next.config.ts` | Enables Cache Components |
 | `vitest.config.mts` | Vitest with the `@/` alias from `tsconfig.json` |
-| `lib/constants.ts` | `APP_NAME` and the item and file limits |
+| `lib/constants.ts` | `APP_NAME`, item and file counts, and the text `LIMITS` shared by schemas and forms |
 | `lib/dates.ts` | UTC date helpers and date-picker conversions |
 | `lib/reminders.ts` | `reminderDue()` |
 | `lib/safe-next-path.ts` | `safeNextPath()` for post-sign-in redirects |
@@ -335,7 +335,7 @@ git commit -m "feat: add UTC date helpers and reminder schedule"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `lib/safe-next-path.test.ts`. Besides the spec's rules (must start with `/`, must not start with `//`), it rejects backslashes and control characters, because browsers turn `/\evil.example` and `/<tab>/evil.example` into `//evil.example`:
+Create `lib/safe-next-path.test.ts`. Besides the spec's rules (must start with `/`, must not start with `//`), it rejects backslashes and control characters, because browsers turn `/\evil.example` and `/<tab>/evil.example` into `//evil.example`, and it resolves `.` and `..` segments, which could otherwise turn `/..//evil.example` into `//evil.example`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -344,6 +344,10 @@ import { safeNextPath } from "@/lib/safe-next-path";
 describe("safeNextPath", () => {
   it.each(["/app", "/portal/requests/123?tab=files", "/app/clients#contacts"])("accepts %s", (path) => {
     expect(safeNextPath(path)).toBe(path);
+  });
+
+  it("resolves dot segments", () => {
+    expect(safeNextPath("/app/./clients/../templates")).toBe("/app/templates");
   });
 
   it.each([
@@ -356,6 +360,9 @@ describe("safeNextPath", () => {
     "/\\evil.example",
     "/\t/evil.example",
     "/app\n",
+    "/.//evil.example",
+    "/..//evil.example",
+    "/%2e%2e//evil.example",
   ])("rejects %j", (path) => {
     expect(safeNextPath(path)).toBeNull();
   });
@@ -372,22 +379,27 @@ Expected: FAIL, because `@/lib/safe-next-path` cannot be resolved.
 Create `lib/safe-next-path.ts`:
 
 ```ts
+const BASE = "http://next.invalid";
+
 /**
- * Returns `next` when it is a safe relative path for a post-sign-in redirect,
+ * Returns `next` as a safe relative path for a post-sign-in redirect,
  * otherwise null. Rejects protocol-relative URLs ("//host", "/\host") and
- * control characters, which browsers strip before resolving a URL.
+ * control characters, which browsers strip before resolving a URL, then
+ * resolves "." and ".." segments so "/..//host" cannot become "//host".
  */
 export function safeNextPath(next: string | null | undefined): string | null {
   if (!next || !next.startsWith("/") || next.startsWith("//")) return null;
   if (/[\\\u0000-\u001f\u007f]/.test(next)) return null;
-  return next;
+  const url = new URL(next, BASE);
+  if (url.origin !== BASE || url.pathname.startsWith("//")) return null;
+  return url.pathname + url.search + url.hash;
 }
 ```
 
 - [ ] **Step 4: Run the test to make sure it passes**
 
 Run: `npm test -- lib/safe-next-path.test.ts`
-Expected: PASS, `Tests  12 passed (12)`.
+Expected: PASS, `Tests  16 passed (16)`.
 
 - [ ] **Step 5: Commit**
 
@@ -421,8 +433,10 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("my tax/return (1)é.pdf")).toBe("my_tax_return__1__.pdf");
   });
 
-  it("truncates to 100 characters", () => {
-    expect(sanitizeFilename(`${"a".repeat(150)}.pdf`)).toHaveLength(100);
+  it("keeps at most 100 characters without losing the extension", () => {
+    const safe = sanitizeFilename(`${"a".repeat(150)}.pdf`);
+    expect(safe).toHaveLength(100);
+    expect(safe.endsWith(".pdf")).toBe(true);
   });
 
   it("never returns an empty name", () => {
@@ -448,6 +462,10 @@ describe("uploadMimeType", () => {
   it("rejects other types", () => {
     expect(uploadMimeType({ name: "run.exe", type: "application/x-msdownload" })).toBeNull();
   });
+
+  it.each(["x.constructor", "x.__proto__", "pdf", ".pdf"])("rejects %j", (name) => {
+    expect(uploadMimeType({ name, type: "" })).toBeNull();
+  });
 });
 
 describe("zipEntryNames", () => {
@@ -460,6 +478,15 @@ describe("zipEntryNames", () => {
       ]),
     ).toEqual(["01 Photo ID/scan.pdf", "01 Photo ID/scan (2).pdf", "12 W-2 _ 1099/a_b.pdf"]);
   });
+
+  it("keeps the extension of long names and never uses . or ..", () => {
+    const [long, dots] = zipEntryNames([
+      { itemNumber: 1, itemTitle: "Statements", filename: `${"s".repeat(120)}.pdf` },
+      { itemNumber: 1, itemTitle: "Statements", filename: ".." },
+    ]);
+    expect(long).toBe(`01 Statements/${"s".repeat(96)}.pdf`);
+    expect(dots).toBe("01 Statements/untitled");
+  });
 });
 ```
 
@@ -470,7 +497,7 @@ Expected: FAIL, because `@/lib/files` cannot be resolved.
 
 - [ ] **Step 3: Implement**
 
-Create `lib/files.ts`. `ALLOWED_MIME_TYPES` must stay identical to `allowed_mime_types` on the `documents` bucket (Phase 2, Task 2).
+Create `lib/files.ts`. `ALLOWED_MIME_TYPES` must stay identical to `allowed_mime_types` on the `documents` bucket (Phase 2, Task 2). Truncation shortens the name before the extension so the extension survives, and extension lookups use `Object.hasOwn` so names like `x.constructor` are not mistaken for an allowed type.
 
 ```ts
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -500,6 +527,22 @@ export const ACCEPT_ATTRIBUTE = Object.keys(MIME_BY_EXTENSION)
   .map((extension) => `.${extension}`)
   .join(",");
 
+/** Splits "name.ext" into ["name", ".ext"]. A leading dot does not start an extension. */
+function splitExtension(name: string): [string, string] {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+}
+
+/** Keeps at most `max` characters, shortening the stem so the extension survives. */
+function truncate(name: string, max: number): string {
+  const chars = Array.from(name);
+  if (chars.length <= max) return name;
+  const [stem, extension] = splitExtension(name);
+  const extensionLength = Array.from(extension).length;
+  if (extensionLength >= max) return chars.slice(0, max).join("");
+  return Array.from(stem).slice(0, max - extensionLength).join("") + extension;
+}
+
 /**
  * The declared MIME type to upload a file with, or null when the type is not
  * allowed. Falls back to the extension because browsers often report an empty
@@ -507,13 +550,13 @@ export const ACCEPT_ATTRIBUTE = Object.keys(MIME_BY_EXTENSION)
  */
 export function uploadMimeType(file: { name: string; type: string }): string | null {
   if (ALLOWED_MIME_TYPES.includes(file.type)) return file.type;
-  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return MIME_BY_EXTENSION[extension] ?? null;
+  const extension = splitExtension(file.name)[1].slice(1).toLowerCase();
+  return Object.hasOwn(MIME_BY_EXTENSION, extension) ? MIME_BY_EXTENSION[extension] : null;
 }
 
-/** Replaces every character outside [A-Za-z0-9._-] with "_" and keeps 100 characters. */
+/** Replaces every character outside [A-Za-z0-9._-] with "_" and keeps 100 characters, extension included. */
 export function sanitizeFilename(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 100) || "file";
+  return truncate(name.replace(/[^A-Za-z0-9._-]/g, "_"), 100) || "file";
 }
 
 /** {firm_id}/{client_id}/{item_id}/{random uuid}-{safe name} */
@@ -526,7 +569,9 @@ export function storagePath(
 }
 
 function zipSafe(name: string): string {
-  return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim().slice(0, 100) || "untitled";
+  const safe = truncate(name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim(), 100);
+  // Extractors skip "." and "..", which would silently drop the file.
+  return safe === "" || safe === "." || safe === ".." ? "untitled" : safe;
 }
 
 /**
@@ -540,9 +585,7 @@ export function zipEntryNames(
   return entries.map(({ itemNumber, itemTitle, filename }) => {
     const folder = `${String(itemNumber).padStart(2, "0")} ${zipSafe(itemTitle)}`;
     const base = zipSafe(filename);
-    const dot = base.lastIndexOf(".");
-    const stem = dot > 0 ? base.slice(0, dot) : base;
-    const extension = dot > 0 ? base.slice(dot) : "";
+    const [stem, extension] = splitExtension(base);
     let name = `${folder}/${base}`;
     for (let n = 2; used.has(name.toLowerCase()); n++) {
       name = `${folder}/${stem} (${n})${extension}`;
@@ -556,7 +599,7 @@ export function zipEntryNames(
 - [ ] **Step 4: Run the test to make sure it passes**
 
 Run: `npm test -- lib/files.test.ts`
-Expected: PASS, `Tests  9 passed (9)`.
+Expected: PASS, `Tests  14 passed (14)`.
 
 - [ ] **Step 5: Commit**
 
@@ -587,6 +630,19 @@ export const APP_NAME = "Client Portal";
 
 export const MAX_ITEMS_PER_REQUEST = 100;
 export const MAX_FILES_PER_ITEM = 20;
+
+/**
+ * Text limits in characters. The database check constraints in
+ * supabase/migrations use the same numbers; forms use them as maxLength.
+ */
+export const LIMITS = {
+  firmName: 120,
+  name: 200,
+  description: 2000,
+  textAnswer: 5000,
+  reviewNote: 1000,
+  filename: 255,
+} as const;
 ```
 
 - [ ] **Step 3: Create `lib/errors.ts`**
@@ -612,8 +668,8 @@ const MESSAGES: Record<string, string> = {
  * maps a SQLSTATE code to a message for one call site.
  */
 export function errorMessage(error: SupabaseError, overrides: Record<string, string> = {}): string {
-  if (error?.code && overrides[error.code]) return overrides[error.code];
-  if (error && MESSAGES[error.message]) return MESSAGES[error.message];
+  if (error?.code && Object.hasOwn(overrides, error.code)) return overrides[error.code];
+  if (error && Object.hasOwn(MESSAGES, error.message)) return MESSAGES[error.message];
   if (error?.code === "42501" || error?.code === "23503") return MESSAGES.not_allowed;
   if (error?.code === "23505") return "That already exists.";
   if (error?.code === "23514") return "A value is empty or too long.";
@@ -637,25 +693,25 @@ export function invalid(error: z.ZodError): { ok: false; error: string } {
 
 - [ ] **Step 4: Create `lib/validation.ts`**
 
-The limits match the database check constraints in Phase 2 (spec section 7.1). Forms reuse the same numbers as `maxLength`.
+The limits come from `LIMITS` in `lib/constants.ts`, which matches the database check constraints in Phase 2 (spec section 7.1). Forms use the same `LIMITS` values as `maxLength`.
 
 ```ts
 import { z } from "zod";
-import { MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
+import { LIMITS, MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
 
-// Limits match the check constraints in supabase/migrations.
 const text = (label: string, max: number) =>
   z
     .string()
     .trim()
     .min(1, `${label} is required.`)
-    .max(max, `${label} must be ${max} characters or fewer.`);
+    .max(max, `${label} must be ${max.toLocaleString("en-US")} characters or fewer.`);
 
-export const firmNameSchema = text("Firm name", 120);
-export const personNameSchema = text("Name", 200);
+export const firmNameSchema = text("Firm name", LIMITS.firmName);
+export const personNameSchema = text("Name", LIMITS.name);
 export const emailSchema = z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address."));
-export const reviewNoteSchema = text("Note", 1000);
-export const textAnswerSchema = text("Answer", 5000);
+export const reviewNoteSchema = text("Note", LIMITS.reviewNote);
+export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
+export const filenameSchema = text("File name", LIMITS.filename);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 
 export const onboardingSchema = z.object({
@@ -664,7 +720,7 @@ export const onboardingSchema = z.object({
 });
 
 export const clientSchema = z.object({
-  name: text("Client name", 200),
+  name: text("Client name", LIMITS.name),
   kind: z.enum(["individual", "business"]),
   // "none" because a select option cannot have an empty value.
   ownerId: z.union([z.literal("none"), z.uuid()]).transform((v) => (v === "none" ? null : v)),
@@ -682,11 +738,11 @@ export const staffSchema = z.object({
 });
 
 export const itemSchema = z.object({
-  title: text("Item title", 200),
+  title: text("Item title", LIMITS.name),
   description: z
     .string()
     .trim()
-    .max(2000, "Descriptions must be 2,000 characters or fewer.")
+    .max(LIMITS.description, "Descriptions must be 2,000 characters or fewer.")
     .transform((v) => v || null),
   kind: z.enum(["file", "text"]),
   required: z.boolean(),
@@ -699,19 +755,19 @@ export const itemsSchema = z
 export const draftSchema = z.object({
   requestId: z.uuid().optional(),
   clientId: z.uuid(),
-  title: text("Title", 200),
+  title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
   items: itemsSchema,
 });
 
 export const requestDetailsSchema = z.object({
-  title: text("Title", 200),
+  title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
 });
 
 export const templateSchema = z.object({
   templateId: z.uuid(),
-  name: text("Template name", 200),
+  name: text("Template name", LIMITS.name),
   items: itemsSchema,
 });
 
@@ -740,27 +796,68 @@ git commit -m "feat: add constants, action results, and validation schemas"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `lib/email/templates.test.ts`. It checks the rule from spec section 13: every value a user typed is HTML-escaped, and links are absolute app URLs.
+Create `lib/email/templates.test.ts`. It checks the rule from spec section 13 for all five templates: every value a user typed is HTML-escaped, subjects stay on one line, lists are never nested in paragraphs, and links are absolute app URLs.
 
 ```ts
-import { describe, expect, it } from "vitest";
-import { requestSentEmail } from "@/lib/email/templates";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  needsChangesEmail,
+  reminderEmail,
+  requestSentEmail,
+  staffAddedEmail,
+  staffDigestEmail,
+} from "@/lib/email/templates";
+
+// Every value a user can type, with markup, quotes, and a header-injection attempt.
+const evil = `<img src=x onerror="alert(1)">&'\r\nBcc: victim@evil.example`;
+const escaped = "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;";
+
+const templates = {
+  staffAdded: () => staffAddedEmail({ firmName: evil, adminName: evil }),
+  requestSent: () =>
+    requestSentEmail({ firmName: evil, title: evil, dueDate: "2027-04-15", itemCount: 2, requestId: "r1" }),
+  needsChanges: () => needsChangesEmail({ firmName: evil, itemTitle: evil, note: evil, requestId: "r1" }),
+  reminder: () =>
+    reminderEmail({
+      firmName: evil,
+      title: evil,
+      dueDate: "2027-04-15",
+      overdue: true,
+      openItems: [evil],
+      requestId: "r1",
+    }),
+  staffDigest: () =>
+    staffDigestEmail({
+      firmName: evil,
+      groups: [{ clientName: evil, requestTitle: evil, requestId: "r1", items: [evil] }],
+    }),
+};
 
 describe("email templates", () => {
-  it("escapes every value a user typed", () => {
-    process.env.NEXT_PUBLIC_SITE_URL = "https://portal.example";
-    const email = requestSentEmail({
-      firmName: "Smith & <Co>",
-      title: '<script>alert("x")</script>',
-      dueDate: "2027-04-15",
-      itemCount: 2,
-      requestId: "r1",
-    });
-    expect(email.html).not.toContain("<script>");
-    expect(email.html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
-    expect(email.html).toContain("Smith &amp; &lt;Co&gt;");
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://portal.example");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(Object.entries(templates))("%s escapes user text and keeps the subject on one line", (_name, build) => {
+    const email = build();
+    expect(email.html).not.toContain("<img");
+    expect(email.html).toContain(escaped);
+    expect(email.html).not.toMatch(/<p><ul>|<\/ul><\/p>/);
+    expect(email.subject).not.toMatch(/[\r\n]/);
+  });
+
+  it("links to the request page and formats the due date", () => {
+    const email = requestSentEmail({ firmName: "Smith & Co", title: "2026 taxes", dueDate: "2027-04-15", itemCount: 2, requestId: "r1" });
     expect(email.html).toContain('href="https://portal.example/portal/requests/r1"');
     expect(email.text).toContain("due Apr 15, 2027");
+  });
+
+  it("fails clearly when the site URL is missing", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    expect(() => staffAddedEmail({ firmName: "A", adminName: "B" })).toThrow("NEXT_PUBLIC_SITE_URL is not set");
   });
 });
 ```
@@ -791,16 +888,18 @@ export function escapeHtml(value: string): string {
 
 /** Absolute link to an app page. Emails never link to auth tokens. */
 export function siteUrl(path: string): string {
-  return new URL(path, process.env.NEXT_PUBLIC_SITE_URL).toString();
+  const base = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!base) throw new Error("NEXT_PUBLIC_SITE_URL is not set");
+  return new URL(path, base).toString();
 }
 
 function subjectLine(value: string): string {
   return value.replace(/[\r\n]+/g, " ");
 }
 
-/** Wraps already-escaped HTML paragraphs and one link. */
-function html(paragraphs: string[], link: { href: string; label: string }): string {
-  const body = paragraphs.map((p) => `<p>${p}</p>`).join("");
+/** Wraps already-escaped HTML blocks and one link. Lists are not wrapped in <p>. */
+function html(blocks: string[], link: { href: string; label: string }): string {
+  const body = blocks.map((block) => (block.startsWith("<ul>") ? block : `<p>${block}</p>`)).join("");
   return (
     `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#111">` +
     `${body}<p><a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a></p></div>`
@@ -861,7 +960,7 @@ export function needsChangesEmail(input: {
     html: html(
       [
         `${escapeHtml(input.firmName)} asked for changes to <strong>${escapeHtml(input.itemTitle)}</strong>:`,
-        escapeHtml(input.note),
+        escapeHtml(input.note).replace(/\r?\n/g, "<br>"),
       ],
       { href: link, label: "Open the request" },
     ),
@@ -912,11 +1011,11 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
     html: html(
       [
         `Clients submitted ${count} ${noun} since the last digest:`,
-        ...input.groups.map(
-          (group) =>
-            `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
-            `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>${list(group.items)}`,
-        ),
+        ...input.groups.flatMap((group) => [
+          `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
+            `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
+          list(group.items),
+        ]),
       ],
       { href: dashboard, label: "Open the dashboard" },
     ),
@@ -937,7 +1036,7 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
 - [ ] **Step 4: Run the test to make sure it passes**
 
 Run: `npm test -- lib/email`
-Expected: PASS, `Tests  1 passed (1)`.
+Expected: PASS, `Tests  7 passed (7)`.
 
 - [ ] **Step 5: Write the sender**
 
@@ -945,7 +1044,7 @@ Expected: PASS, `Tests  1 passed (1)`.
 npm install resend server-only
 ```
 
-Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests). With a key it sends batches of at most 100 through `resend.batch.send`, pausing between batches to stay under Resend's default rate limit. It never throws.
+Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests), except in a Vercel production deployment, where a missing key is reported as a failure. With a key it sends batches of at most 100 through `resend.batch.send` in permissive mode, so one rejected address never drops the rest of the batch, and pauses between batches to stay under Resend's default rate limit. `EMAIL_FROM` may be a bare address or `Name <address>`. It never throws.
 
 ```ts
 import "server-only";
@@ -963,24 +1062,42 @@ export type EmailMessage = EmailContent & {
 const BATCH_SIZE = 100; // Resend's per-call maximum
 const PAUSE_MS = 600; // stay under Resend's default 2 requests per second
 
-function fromHeader(fromName: string): string {
+/** The sender address from EMAIL_FROM, given as "addr" or "Name <addr>". */
+function senderAddress(): string | null {
+  const value = process.env.EMAIL_FROM?.trim();
+  if (!value) return null;
+  return value.match(/<([^<>\s]+@[^<>\s]+)>/)?.[1] ?? value;
+}
+
+function fromHeader(fromName: string, address: string): string {
   const name = `${fromName} via ${APP_NAME}`.replace(/["<>\r\n]/g, "");
-  return `"${name}" <${process.env.EMAIL_FROM}>`;
+  return `"${name}" <${address}>`;
 }
 
 /**
  * Sends emails in batches. Failures are logged and counted, never thrown.
- * Without RESEND_API_KEY (development, tests) each email is logged instead.
+ * Without RESEND_API_KEY each email is logged instead (development, tests);
+ * in a Vercel production deployment a missing key is an error, never log mode.
  */
 export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
   if (messages.length === 0) return { sent: 0, failed: 0 };
 
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
+    if (process.env.VERCEL_ENV === "production") {
+      console.error(`[email] RESEND_API_KEY is not set; ${messages.length} emails not sent`);
+      return { sent: 0, failed: messages.length };
+    }
     for (const m of messages) {
       console.log(`[email] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);
     }
     return { sent: messages.length, failed: 0 };
+  }
+
+  const address = senderAddress();
+  if (!address) {
+    console.error(`[email] EMAIL_FROM is not set; ${messages.length} emails not sent`);
+    return { sent: 0, failed: messages.length };
   }
 
   const resend = new Resend(apiKey);
@@ -990,18 +1107,24 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
     if (i > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
     const batch = messages.slice(i, i + BATCH_SIZE);
     try {
-      const { error } = await resend.batch.send(
+      // Permissive: Resend sends the valid messages even if one is rejected.
+      const { data, error } = await resend.batch.send(
         batch.map((m) => ({
-          from: fromHeader(m.fromName),
+          from: fromHeader(m.fromName, address),
           to: m.to,
           subject: m.subject,
           html: m.html,
           text: m.text,
           replyTo: m.replyTo,
         })),
+        { batchValidation: "permissive" },
       );
       if (error) throw error;
-      sent += batch.length;
+      for (const rejected of data.errors) {
+        console.error("[email] rejected", batch[rejected.index]?.to, rejected.message);
+      }
+      failed += data.errors.length;
+      sent += batch.length - data.errors.length;
     } catch (error) {
       failed += batch.length;
       console.error("[email] batch failed", error);
@@ -1014,7 +1137,7 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
 - [ ] **Step 6: Verify the whole phase**
 
 Run: `npm test && npm run typecheck && npm run lint && npm run build`
-Expected: `Test Files  4 passed (4)`, `Tests  31 passed (31)`; typecheck, lint, and build succeed.
+Expected: `Test Files  4 passed (4)`, `Tests  46 passed (46)`; typecheck, lint, and build succeed.
 
 - [ ] **Step 7: Commit**
 

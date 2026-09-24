@@ -133,7 +133,7 @@ git commit -m "feat: stream a request's files as one zip"
 
 Create `lib/daily-jobs.ts`. It follows spec section 11.2:
 - Reminder candidates are `open` requests whose client is not archived and that have at least one `requested` or `needs_changes` item. `reminderDue()` (Phase 1) decides the day.
-- Each email is claimed first with an `upsert(…, { ignoreDuplicates: true })` on `unique (kind, target_id, sent_on)`, which is `insert … on conflict do nothing returning id`. No returned row means the claim was already made today.
+- Each email is built first, so a configuration error cannot use up a claim, then claimed with an `upsert(…, { ignoreDuplicates: true })` on `unique (kind, target_id, sent_on)`, which is `insert … on conflict do nothing returning id`. No returned row means the claim was already made today.
 - A digest window starts at the member's previous claim, or 24 hours ago if there is none, so a missed day is covered by the next run. Members with nothing in the window are skipped without a claim.
 - Reminder reply-to is the request's creator while they are still a member; digests have none.
 
@@ -191,8 +191,8 @@ async function queueReminders(admin: Admin, firm: Firm, today: string, out: Emai
   for (const request of requests) {
     const sentOn = request.sent_at ? todayUtc(new Date(request.sent_at)) : today;
     if (!reminderDue({ dueDate: request.due_date, sentOn, today })) continue;
-    if (!(await claim(admin, "reminder", request.id, today))) continue;
 
+    // Built before the claim, so a configuration error does not use up today's reminder.
     const content = reminderEmail({
       firmName: firm.name,
       title: request.title,
@@ -201,6 +201,7 @@ async function queueReminders(admin: Admin, firm: Firm, today: string, out: Emai
       openItems: request.request_items.map((item) => item.title),
       requestId: request.id,
     });
+    if (!(await claim(admin, "reminder", request.id, today))) continue;
     const replyTo = members?.find((m) => m.user_id === request.created_by)?.email;
     for (const contact of contacts ?? []) {
       if (contact.client_id === request.client_id) {
@@ -239,7 +240,6 @@ async function queueDigests(admin: Admin, firm: Firm, today: string, now: Date, 
       .order("submitted_at");
     if (itemsError) throw itemsError;
     if (items.length === 0) continue;
-    if (!(await claim(admin, "staff_digest", member.user_id, today))) continue;
 
     const groups = new Map<string, DigestGroup>();
     for (const item of items) {
@@ -253,6 +253,7 @@ async function queueDigests(admin: Admin, firm: Firm, today: string, now: Date, 
       groups.set(item.request_id, group);
     }
     const content = staffDigestEmail({ firmName: firm.name, groups: [...groups.values()] });
+    if (!(await claim(admin, "staff_digest", member.user_id, today))) continue;
     out.push({ ...content, to: member.email, fromName: firm.name });
     count++;
   }
@@ -453,7 +454,7 @@ npm run build
 npm run test:e2e
 ```
 
-Expected: pgTAP `Files=10, Tests=130, Result: PASS`; Vitest `Tests  31 passed (31)`; typecheck, lint, and build succeed; Playwright `1 passed`.
+Expected: pgTAP `Files=10, Tests=130, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
 
 Optionally run `npx supabase db advisors --local`. It reports only `multiple_permissive_policies` warnings: the staff and contact read rules are separate policies on purpose, one per actor, to match spec section 8.2.
 

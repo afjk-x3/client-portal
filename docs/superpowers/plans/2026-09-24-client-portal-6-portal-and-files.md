@@ -319,19 +319,17 @@ Expected: still FAIL, later: the contact sees "2026 tax documents" and opens it,
 
 - [ ] **Step 1: Add the portal actions**
 
-Create `app/portal/requests/[id]/actions.ts`. `createUploadUrl` checks `can_write_document` explicitly before creating the signed URL, so safety does not depend on when Storage evaluates its insert policy for signed uploads. The contact is never trusted for the path: the action builds it from the item's firm and client.
+Create `app/portal/requests/[id]/actions.ts`. `createUploadUrl` checks `can_write_document` explicitly before creating the signed URL, so safety does not depend on when Storage evaluates its insert policy for signed uploads. It also refuses once the item has 20 files, before anything is uploaded. The contact is never trusted for the path: the action builds it from the item's firm and client.
 
 ```ts
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
+import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { storagePath } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
-import { textAnswerSchema } from "@/lib/validation";
-
-const filenameSchema = z.string().min(1).max(255, "File names must be 255 characters or fewer.");
+import { filenameSchema, textAnswerSchema } from "@/lib/validation";
 
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
@@ -356,6 +354,16 @@ export async function createUploadUrl(
     .eq("id", itemId)
     .maybeSingle();
   if (!item?.requests) return fail(notFound);
+
+  // Refuse before signing: a 21st upload would be rejected by register_file
+  // after the object already exists.
+  const { count } = await supabase
+    .from("item_files")
+    .select("id", { count: "exact", head: true })
+    .eq("item_id", itemId);
+  if ((count ?? 0) >= MAX_FILES_PER_ITEM) {
+    return { ok: false, error: `An item can have at most ${MAX_FILES_PER_ITEM} files.` };
+  }
 
   const path = storagePath({ firmId: item.firm_id, clientId: item.requests.client_id, itemId }, name.data);
   const { data: allowed, error } = await supabase.rpc("can_write_document", { name: path });
@@ -424,6 +432,7 @@ Create `app/portal/requests/[id]/item-card.tsx`. Notes:
 - When the browser reports no type (common for HEIC and CSV), the file is re-wrapped with the type from its extension, because the bucket rejects anything outside its allowed list.
 - Files upload one at a time through a promise queue; each shows "Waiting…", "Uploading…", or its error with a Retry button. A finished upload disappears from the queue and shows up in the file list after the page revalidates.
 - The item is editable only while the request is `open` and the item is `requested` or `needs_changes`.
+- The picker hides once the item holds 20 files, counting queued uploads, and extra files in one drop are refused with a toast.
 
 ```tsx
 "use client";
@@ -436,6 +445,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, MAX_FILE_BYTES, uploadMimeType } from "@/lib/files";
 import { createClient } from "@/lib/supabase/client";
@@ -533,8 +543,14 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
     });
   }
 
+  const room = MAX_FILES_PER_ITEM - item.files.length - uploads.length;
+
   function addFiles(files: FileList | null) {
-    const added = Array.from(files ?? []).map((file) => ({ key: crypto.randomUUID(), file, status: "pending" as const }));
+    const picked = Array.from(files ?? []);
+    if (picked.length > room) toast.error(`An item can have at most ${MAX_FILES_PER_ITEM} files.`);
+    const added = picked
+      .slice(0, Math.max(0, room))
+      .map((file) => ({ key: crypto.randomUUID(), file, status: "pending" as const }));
     setUploads((current) => [...current, ...added]);
     added.forEach(enqueue);
   }
@@ -591,41 +607,41 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
           ))}
         </ul>
       )}
-      {editable && (
-        <>
-          <label
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
+      {editable && room > 0 && (
+        <label
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm ${
+            dragging ? "bg-muted" : ""
+          }`}
+        >
+          <span className="font-medium">Choose files or drag them here</span>
+          <span className="text-muted-foreground">PDF, images, Word, Excel, or CSV. Up to 25 MB each.</span>
+          <input
+            type="file"
+            multiple
+            accept={ACCEPT_ATTRIBUTE}
+            className="sr-only"
+            onChange={(event) => {
+              addFiles(event.target.files);
+              event.target.value = "";
             }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm ${
-              dragging ? "bg-muted" : ""
-            }`}
-          >
-            <span className="font-medium">Choose files or drag them here</span>
-            <span className="text-muted-foreground">PDF, images, Word, Excel, or CSV. Up to 25 MB each.</span>
-            <input
-              type="file"
-              multiple
-              accept={ACCEPT_ATTRIBUTE}
-              className="sr-only"
-              onChange={(event) => {
-                addFiles(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          <ActionButton
-            className="self-start"
-            disabled={item.files.length === 0 || busy}
-            action={() => submitItem(item.id)}
-            success="Submitted. We'll let you know if anything else is needed."
-          >
-            Submit
-          </ActionButton>
-        </>
+          />
+        </label>
+      )}
+      {editable && (
+        <ActionButton
+          className="self-start"
+          disabled={item.files.length === 0 || busy}
+          action={() => submitItem(item.id)}
+          success="Submitted. We'll let you know if anything else is needed."
+        >
+          Submit
+        </ActionButton>
       )}
     </div>
   );
@@ -648,7 +664,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         name="answer"
         aria-label={`Answer for ${item.title}`}
         defaultValue={item.textAnswer ?? ""}
-        maxLength={5000}
+        maxLength={LIMITS.textAnswer}
         rows={4}
         required
       />
