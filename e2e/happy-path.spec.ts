@@ -51,4 +51,31 @@ test("a firm collects a document from a client", async ({ browser }) => {
   await staff.getByRole("button", { name: "Send", exact: true }).click();
   await expect(staff).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
   await expect(staff.getByText("Open", { exact: true })).toBeVisible();
+
+  // 4. The contact signs in with a code.
+  const contact = await (await browser.newContext()).newPage();
+  await signIn(contact, contactEmail);
+  await expect(contact).toHaveURL(/\/portal$/);
+
+  // 5. The contact uploads a PDF and submits the item.
+  await contact.getByRole("link", { name: /2026 tax documents/ }).click();
+  await contact.locator('input[type="file"]').setInputFiles({
+    name: "passport.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"),
+  });
+  await expect(contact.getByText("passport.pdf")).toBeVisible();
+  await contact.getByRole("button", { name: "Submit" }).click();
+  await expect(contact.getByText("Submitted", { exact: true })).toBeVisible();
+
+  // 6. Staff accepts the item.
+  await staff.reload();
+  await staff.getByRole("button", { name: "Photo ID" }).click();
+  const sheet = staff.getByRole("dialog", { name: "Photo ID" });
+  await sheet.getByRole("button", { name: "Accept" }).click();
+  await expect(sheet.getByText("Accepted", { exact: true })).toBeVisible();
+  await staff.keyboard.press("Escape");
+
+  // 7. The request shows as Completed.
+  await expect(staff.getByRole("heading", { name: /2026 tax documents/ })).toContainText("Completed");
 });
