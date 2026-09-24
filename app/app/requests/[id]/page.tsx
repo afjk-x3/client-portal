@@ -7,6 +7,7 @@ import { requireStaff } from "@/lib/auth";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { RequestEditor } from "../request-editor";
 import { RequestActions } from "./request-actions";
 import { ReviewItems } from "./review-items";
@@ -21,9 +22,10 @@ export default function RequestPage({ params }: PageProps<"/app/requests/[id]">)
 
 async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error } = await supabase
     .from("requests")
     .select(
       `id, title, status, due_date, sent_at, client_id, clients(name),
@@ -36,6 +38,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (error) throw error;
   if (!request) notFound();
 
   const clientLink = (

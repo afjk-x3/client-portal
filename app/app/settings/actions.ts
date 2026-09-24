@@ -8,7 +8,7 @@ import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { firmNameSchema, staffSchema } from "@/lib/validation";
+import { firmNameSchema, isId, roleSchema, staffSchema } from "@/lib/validation";
 
 export async function renameFirm(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireAdmin();
@@ -37,8 +37,9 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
 
   const supabase = await createClient();
   // Build the email before changing anything, so a configuration error adds nobody.
-  const { data: firm } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
-  const firmName = firm?.name ?? "";
+  const { data: firm, error: firmError } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
+  if (firmError) return fail(firmError);
+  const firmName = firm.name;
   const content = staffAddedEmail({ firmName, adminName: admin.fullName });
 
   const userId = await ensureUser(parsed.data.email);
@@ -61,10 +62,13 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
 
 export async function changeRole(userId: string, role: "admin" | "staff"): Promise<ActionResult> {
   const admin = await requireAdmin();
+  if (!isId(userId)) return fail(notFound);
+  const parsedRole = roleSchema.safeParse(role);
+  if (!parsedRole.success) return invalid(parsedRole.error);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("firm_members")
-    .update({ role })
+    .update({ role: parsedRole.data })
     .eq("firm_id", admin.firmId)
     .eq("user_id", userId)
     .neq("user_id", admin.userId)
@@ -79,6 +83,7 @@ export async function changeRole(userId: string, role: "admin" | "staff"): Promi
 
 export async function removeStaff(userId: string): Promise<ActionResult> {
   const admin = await requireAdmin();
+  if (!isId(userId)) return fail(notFound);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("firm_members")

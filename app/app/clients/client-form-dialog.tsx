@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, useId, useLayoutEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 
 export type Member = { userId: string; fullName: string };
 
@@ -44,7 +45,10 @@ export function ClientFormDialog({
   openAfterSave?: boolean;
 }) {
   const router = useRouter();
+  const id = useId();
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: Result | null, formData: FormData) => {
     const result = await action(prev, formData);
     if (result.ok) {
@@ -64,15 +68,15 @@ export function ClientFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-name">Name</Label>
-            <Input id="client-name" name="name" defaultValue={initial?.name} maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-name`}>Name</Label>
+            <Input id={`${id}-name`} name="name" defaultValue={initial?.name} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-kind">Type</Label>
+            <Label htmlFor={`${id}-kind`}>Type</Label>
             <Select name="kind" defaultValue={initial?.kind ?? "individual"}>
-              <SelectTrigger id="client-kind">
+              <SelectTrigger id={`${id}-kind`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -82,9 +86,9 @@ export function ClientFormDialog({
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-owner">Owner</Label>
+            <Label htmlFor={`${id}-owner`}>Owner</Label>
             <Select name="ownerId" defaultValue={initial?.ownerId ?? "none"}>
-              <SelectTrigger id="client-owner">
+              <SelectTrigger id={`${id}-owner`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -59,30 +59,36 @@ export function RequestEditor({
 
   function save(send: boolean) {
     startTransition(async () => {
-      const saved = await saveDraft({ requestId, clientId, title, dueDate: dueDate ?? "", items: toItemInputs(items) });
-      if (!saved.ok) {
-        toast.error(saved.error);
-        return;
-      }
-      const savedId = saved.data!.id;
-      if (send) {
-        const sent = await sendRequest(savedId);
-        if (!sent.ok) toast.error(sent.error);
-        else if (sent.data?.contacts) toast.success("Request sent.");
-        else toast.warning("Request sent, but this client has no contacts yet. Add one so they can sign in.");
-      } else {
-        toast.success("Draft saved.");
-      }
-      if (!requestId) {
-        // Next keeps this page mounted (hidden) after navigating, so clear the form
-        // for the next visit. One transition, so the old form stays until the new page shows.
-        startTransition(() => {
-          setTemplateId("blank");
-          setTitle("");
-          setDueDate(null);
-          setItems([]);
-          router.push(`/app/requests/${savedId}`);
-        });
+      try {
+        const saved = await saveDraft({ requestId, clientId, title, dueDate: dueDate ?? "", items: toItemInputs(items) });
+        if (!saved.ok) {
+          toast.error(saved.error);
+          return;
+        }
+        const savedId = saved.data!.id;
+        if (send) {
+          const sent = await sendRequest(savedId);
+          if (!sent.ok) toast.error(sent.error);
+          else if (sent.data?.contacts) toast.success("Request sent.");
+          else toast.warning("Request sent, but this client has no contacts yet. Add one so they can sign in.");
+        } else {
+          toast.success("Draft saved.");
+        }
+        if (!requestId) {
+          // Next keeps this page mounted (hidden) after navigating, so clear the form
+          // for the next visit. One transition, so the old form stays until the new page shows.
+          startTransition(() => {
+            setTemplateId("blank");
+            setTitle("");
+            setDueDate(null);
+            setItems([]);
+            router.push(`/app/requests/${savedId}`);
+          });
+        }
+      } catch (error) {
+        // Keep the unsaved work on screen rather than replacing the page with the error boundary.
+        console.error(error);
+        toast.error("Something went wrong. Check your connection and try again.");
       }
     });
   }

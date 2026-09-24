@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addItem, setRequestArchived, updateRequestDetails } from "../actions";
 
 /** Header actions for a sent request. */
@@ -60,6 +61,8 @@ export function RequestActions({
 
 function useDialogAction(action: (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>, success: string) {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open dialog.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await action(prev, formData);
     if (result.ok) {
@@ -79,9 +82,17 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
     "Request updated.",
   );
   const [date, setDate] = useState<string | null>(dueDate);
+  const id = useId();
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Start from the saved date each time, not one picked and then cancelled.
+        if (next) setDate(dueDate);
+        setOpen(next);
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline">Edit details</Button>
       </DialogTrigger>
@@ -89,14 +100,14 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
         <DialogHeader>
           <DialogTitle>Edit request</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="request-title">Title</Label>
-            <Input id="request-title" name="title" defaultValue={title} maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-title`}>Title</Label>
+            <Input id={`${id}-title`} name="title" defaultValue={title} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="request-due">Due date</Label>
-            <DatePicker id="request-due" name="dueDate" value={date} onChange={setDate} />
+            <Label htmlFor={`${id}-due`}>Due date</Label>
+            <DatePicker id={`${id}-due`} name="dueDate" value={date} onChange={setDate} />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>
@@ -111,6 +122,7 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
 
 function AddItemDialog({ requestId }: { requestId: string }) {
   const { open, setOpen, formAction, pending } = useDialogAction(addItem.bind(null, requestId), "Item added.");
+  const id = useId();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -124,14 +136,14 @@ function AddItemDialog({ requestId }: { requestId: string }) {
         <DialogHeader>
           <DialogTitle>Add item</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="item-title">Title</Label>
-            <Input id="item-title" name="title" maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-title`}>Title</Label>
+            <Input id={`${id}-title`} name="title" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="item-description">Details (optional)</Label>
-            <Textarea id="item-description" name="description" maxLength={LIMITS.description} rows={3} />
+            <Label htmlFor={`${id}-description`}>Details (optional)</Label>
+            <Textarea id={`${id}-description`} name="description" maxLength={LIMITS.description} rows={3} />
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <Select name="kind" defaultValue="file">
@@ -144,8 +156,8 @@ function AddItemDialog({ requestId }: { requestId: string }) {
               </SelectContent>
             </Select>
             <div className="flex items-center gap-2">
-              <Checkbox id="item-required" name="required" defaultChecked />
-              <Label htmlFor="item-required">Required</Label>
+              <Checkbox id={`${id}-required`} name="required" defaultChecked />
+              <Label htmlFor={`${id}-required`}>Required</Label>
             </div>
           </div>
           <DialogFooter>

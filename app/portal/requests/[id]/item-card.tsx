@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, MAX_FILE_BYTES, uploadMimeType } from "@/lib/files";
+import { submitKeepingValues } from "@/lib/forms";
 import { createClient } from "@/lib/supabase/client";
 import { createUploadUrl, registerFile, removeFile, submitItem } from "./actions";
 
@@ -222,7 +223,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
     return <p className="whitespace-pre-wrap text-sm">{item.textAnswer ?? "No answer."}</p>;
   }
   return (
-    <form action={formAction} className="flex flex-col gap-2">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
       <Textarea
         name="answer"
         aria-label={`Answer for ${item.title}`}

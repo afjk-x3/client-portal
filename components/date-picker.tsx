@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { CalendarIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -20,6 +20,8 @@ export function DatePicker({
   onChange: (value: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
 
   return (
     <>
@@ -33,6 +35,7 @@ export function DatePicker({
         <PopoverContent className="w-auto p-0" align="start">
           <Calendar
             mode="single"
+            required
             selected={value ? fromDateString(value) : undefined}
             onSelect={(date) => {
               onChange(date ? toDateString(date) : null);

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { renameFirm } from "./actions";
 
 export function FirmNameForm({ name, editable }: { name: string; editable: boolean }) {
@@ -18,7 +19,7 @@ export function FirmNameForm({ name, editable }: { name: string; editable: boole
   }, null);
 
   return (
-    <form action={formAction} className="flex max-w-md flex-col gap-2">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex max-w-md flex-col gap-2">
       <Label htmlFor="firm-name">Firm name</Label>
       <div className="flex gap-2">
         <Input id="firm-name" name="name" defaultValue={name} maxLength={LIMITS.firmName} required disabled={!editable} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addContact, removeContact } from "./actions";
 
 type Contact = { userId: string; fullName: string; email: string };
@@ -64,7 +65,10 @@ export function Contacts({ clientId, contacts }: { clientId: string; contacts: C
 }
 
 function AddContactDialog({ clientId }: { clientId: string }) {
+  const id = useId();
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await addContact(clientId, prev, formData);
     if (result.ok) {
@@ -89,14 +93,14 @@ function AddContactDialog({ clientId }: { clientId: string }) {
           <DialogTitle>Add contact</DialogTitle>
           <DialogDescription>They sign in with a code sent to this email. Nothing is sent until you send a request.</DialogDescription>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="contact-name">Full name</Label>
-            <Input id="contact-name" name="fullName" maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-name`}>Full name</Label>
+            <Input id={`${id}-name`} name="fullName" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="contact-email">Email</Label>
-            <Input id="contact-email" name="email" type="email" required />
+            <Label htmlFor={`${id}-email`}>Email</Label>
+            <Input id={`${id}-email`} name="email" type="email" required />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>

@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { fail, invalid, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
@@ -26,5 +27,6 @@ export async function addClient(
     .single();
   if (error) return fail(error);
 
+  revalidatePath("/app/clients");
   return { ok: true, data: { id: data.id } };
 }

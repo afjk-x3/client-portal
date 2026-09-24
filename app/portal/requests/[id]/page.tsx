@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getContactClientIds } from "@/lib/auth";
 import { formatDate } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { progressPercent } from "../../progress";
 import { ItemCard } from "./item-card";
 
@@ -20,9 +21,10 @@ export default function PortalRequestPage({ params }: PageProps<"/portal/request
 
 async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const clientIds = await getContactClientIds();
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error } = await supabase
     .from("requests")
     .select(
       `id, title, status, due_date, clients(firms(name)),
@@ -36,6 +38,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (error) throw error;
   if (!request) notFound();
 
   const progress = progressPercent(request.request_items);

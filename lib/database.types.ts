@@ -443,6 +443,21 @@ export type Database = {
         Returns: string
       }
       remove_file: { Args: { file_id: string }; Returns: string }
+      remove_item: { Args: { item_id: string }; Returns: string }
+      save_draft: {
+        Args: {
+          client_id: string
+          due_date: string
+          items: Json
+          request_id?: string
+          title: string
+        }
+        Returns: string
+      }
+      save_template: {
+        Args: { items: Json; name: string; template_id: string }
+        Returns: undefined
+      }
       submit_item: {
         Args: { item_id: string; text_answer?: string }
         Returns: undefined

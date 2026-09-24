@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/dates";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { acceptItem, removeItem, returnItem } from "../actions";
 
 export type ReviewItem = {
@@ -30,6 +31,8 @@ export type ReviewItem = {
 
 export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open Sheet.
+  useLayoutEffect(() => () => setOpenId(null), []);
   const selected = items.find((item) => item.id === openId);
 
   return (
@@ -73,7 +76,8 @@ export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable
 }
 
 function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable: boolean; onRemoved: () => void }) {
-  const canReturn = item.status === "submitted" || item.status === "accepted";
+  const canAccept = editable && item.status !== "accepted";
+  const canReturn = editable && (item.status === "submitted" || item.status === "accepted");
   const canRemove = editable && item.status === "requested" && item.files.length === 0;
 
   return (
@@ -123,7 +127,7 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
         </Alert>
       )}
       <div className="flex flex-col gap-4 border-t pt-4">
-        {item.status !== "accepted" && (
+        {canAccept && (
           <ActionButton action={() => acceptItem(item.id)} success="Item accepted.">
             Accept
           </ActionButton>
@@ -148,6 +152,7 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
 }
 
 function NeedsChangesForm({ itemId }: { itemId: string }) {
+  const id = useId();
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await returnItem(itemId, prev, formData);
     if (result.ok) toast.success("Returned to the client with your note.");
@@ -156,9 +161,9 @@ function NeedsChangesForm({ itemId }: { itemId: string }) {
   }, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <Label htmlFor="review-note">What needs to change?</Label>
-      <Textarea id="review-note" name="note" maxLength={LIMITS.reviewNote} rows={3} required />
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
+      <Label htmlFor={`${id}-note`}>What needs to change?</Label>
+      <Textarea id={`${id}-note`} name="note" maxLength={LIMITS.reviewNote} rows={3} required />
       <Button type="submit" variant="outline" disabled={pending}>
         Needs changes
       </Button>

@@ -19,19 +19,21 @@ export default function SettingsPage() {
 async function Settings() {
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [{ data: firm }, { data: members }] = await Promise.all([
+  const [firm, members] = await Promise.all([
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
     supabase.from("firm_members").select("user_id, full_name, email, role").eq("firm_id", staff.firmId).order("full_name"),
   ]);
+  if (firm.error) throw firm.error;
+  if (members.error) throw members.error;
   const isAdmin = staff.role === "admin";
 
   return (
     <>
-      <FirmNameForm name={firm?.name ?? ""} editable={isAdmin} />
+      <FirmNameForm name={firm.data.name} editable={isAdmin} />
       <Team
         currentUserId={staff.userId}
         isAdmin={isAdmin}
-        members={(members ?? []).map((m) => ({
+        members={members.data.map((m) => ({
           userId: m.user_id,
           fullName: m.full_name,
           email: m.email,

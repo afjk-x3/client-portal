@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { requireStaff } from "@/lib/auth";
 import { formatDate } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { ClientFormDialog } from "../client-form-dialog";
 import { setClientArchived, updateClient } from "./actions";
 import { Contacts } from "./contacts";
@@ -25,9 +26,10 @@ export default function ClientPage({ params }: PageProps<"/app/clients/[id]">) {
 
 async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [{ data: client }, contacts, requests, members] = await Promise.all([
+  const [clientResult, contacts, requests, members] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, kind, owner_id, archived_at")
@@ -48,9 +50,14 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
       .order("created_at", { ascending: false }),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId).order("full_name"),
   ]);
+  if (clientResult.error) throw clientResult.error;
+  if (contacts.error) throw contacts.error;
+  if (requests.error) throw requests.error;
+  if (members.error) throw members.error;
+  const client = clientResult.data;
   if (!client) notFound();
 
-  const memberList = (members.data ?? []).map((m) => ({ userId: m.user_id, fullName: m.full_name }));
+  const memberList = members.data.map((m) => ({ userId: m.user_id, fullName: m.full_name }));
   const owner = memberList.find((m) => m.userId === client.owner_id);
   const archived = client.archived_at !== null;
 
@@ -93,17 +100,17 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
 
       <Contacts
         clientId={id}
-        contacts={(contacts.data ?? []).map((c) => ({ userId: c.user_id, fullName: c.full_name, email: c.email }))}
+        contacts={contacts.data.map((c) => ({ userId: c.user_id, fullName: c.full_name, email: c.email }))}
       />
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">Requests</h2>
-        {(requests.data ?? []).length === 0 ? (
+        {requests.data.length === 0 ? (
           <p className="text-sm text-muted-foreground">No requests yet.</p>
         ) : (
           <Table>
             <TableBody>
-              {(requests.data ?? []).map((request) => (
+              {requests.data.map((request) => (
                 <TableRow key={request.id}>
                   <TableCell>
                     <Link className="font-medium underline-offset-4 hover:underline" href={`/app/requests/${request.id}`}>

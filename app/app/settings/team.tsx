@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useLayoutEffect, useState, useTransition } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -30,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addStaff, changeRole, removeStaff } from "./actions";
 
 type Member = { userId: string; fullName: string; email: string; role: "admin" | "staff" };
@@ -131,6 +132,8 @@ function RemoveButton({ member }: { member: Member }) {
 
 function AddStaffDialog() {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await addStaff(prev, formData);
     if (result.ok) {
@@ -155,7 +158,7 @@ function AddStaffDialog() {
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>Every staff member sees every client in the firm.</DialogDescription>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="staff-name">Full name</Label>
             <Input id="staff-name" name="fullName" maxLength={LIMITS.name} required />

@@ -5,7 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { clientSchema, contactSchema } from "@/lib/validation";
+import { clientSchema, contactSchema, isId } from "@/lib/validation";
 
 export async function updateClient(
   clientId: string,
@@ -13,6 +13,7 @@ export async function updateClient(
   formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const parsed = clientSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
@@ -33,13 +34,17 @@ export async function updateClient(
 
 export async function setClientArchived(clientId: string, archived: boolean): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("clients")
     .update({ archived_at: archived ? new Date().toISOString() : null })
     .eq("id", clientId)
-    .eq("firm_id", staff.firmId);
+    .eq("firm_id", staff.firmId)
+    .select("id")
+    .maybeSingle();
   if (error) return fail(error);
+  if (!data) return fail(notFound);
 
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true };
@@ -52,6 +57,7 @@ export async function addContact(
   formData: FormData,
 ): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
@@ -80,14 +86,18 @@ export async function addContact(
 
 export async function removeContact(clientId: string, userId: string): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId) || !isId(userId)) return fail(notFound);
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("client_contacts")
     .delete()
     .eq("client_id", clientId)
     .eq("user_id", userId)
-    .eq("firm_id", staff.firmId);
+    .eq("firm_id", staff.firmId)
+    .select("user_id")
+    .maybeSingle();
   if (error) return fail(error);
+  if (!data) return fail(notFound);
 
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true };

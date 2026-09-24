@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { createFirm } from "./actions";
 
 export function OnboardingForm() {
@@ -17,7 +18,7 @@ export function OnboardingForm() {
   }, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <Label htmlFor="firmName">Firm name</Label>
         <Input id="firmName" name="firmName" maxLength={LIMITS.firmName} required autoFocus />
