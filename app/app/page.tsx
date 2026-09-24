@@ -28,11 +28,13 @@ async function Dashboard() {
       .eq("status", "open")
       .in("request_items.status", ["requested", "needs_changes"])
       .order("due_date"),
+    // Submitted items of open and completed requests; archived requests are closed.
     supabase
       .from("request_items")
-      .select("id, title, submitted_at, request_id, requests(title, clients(name))")
+      .select("id, title, submitted_at, request_id, requests!inner(title, clients(name))")
       .eq("firm_id", staff.firmId)
       .eq("status", "submitted")
+      .neq("requests.status", "archived")
       .order("submitted_at"),
   ]);
   if (waiting.error) throw waiting.error;
@@ -51,8 +53,8 @@ async function Dashboard() {
       }))}
       ready={ready.data.map((item) => ({
         requestId: item.request_id,
-        client: item.requests?.clients?.name ?? "",
-        request: item.requests?.title ?? "",
+        client: item.requests.clients?.name ?? "",
+        request: item.requests.title,
         item: item.title,
         submittedAt: item.submitted_at ?? "",
       }))}

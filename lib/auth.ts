@@ -19,16 +19,17 @@ export const getUser = cache(async () => {
   return { id: data.claims.sub, email: data.claims.email ?? "" };
 });
 
-/** The caller's staff membership, or null. */
+/** The caller's staff membership, or null. A failed query throws, so it never reads as "not staff". */
 export const getStaff = cache(async (): Promise<Staff | null> => {
   const user = await getUser();
   if (!user) return null;
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("firm_members")
     .select("firm_id, role, full_name, email")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (error) throw error;
   if (!data) return null;
   return {
     userId: user.id,
@@ -44,8 +45,9 @@ export const getContactClientIds = cache(async (): Promise<string[]> => {
   const user = await getUser();
   if (!user) return [];
   const supabase = await createClient();
-  const { data } = await supabase.from("client_contacts").select("client_id").eq("user_id", user.id);
-  return (data ?? []).map((row) => row.client_id);
+  const { data, error } = await supabase.from("client_contacts").select("client_id").eq("user_id", user.id);
+  if (error) throw error;
+  return data.map((row) => row.client_id);
 });
 
 /** Where a signed-in user goes when no `next` path is given. */

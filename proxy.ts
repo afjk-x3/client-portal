@@ -3,7 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 
 const SIGNED_IN_ONLY = ["/app", "/portal", "/onboarding"];
 
-/** Refreshes the Supabase session and sends signed-out users to /login. Never redirects /api/*. */
+/** Refreshes the Supabase session and sends signed-out page loads to /login. Never redirects /api/*. */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -30,7 +30,10 @@ export async function proxy(request: NextRequest) {
 
   const { pathname, search } = request.nextUrl;
   const needsSession = SIGNED_IN_ONLY.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-  if (!data && needsSession) {
+  // Only page loads. A Server Action (POST) cannot follow a redirect to a page;
+  // it checks the session itself and redirects through requireStaff().
+  const pageLoad = request.method === "GET" || request.method === "HEAD";
+  if (!data && needsSession && pageLoad) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = `?next=${encodeURIComponent(pathname + search)}`;

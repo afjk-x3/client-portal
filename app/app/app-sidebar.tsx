@@ -36,19 +36,23 @@ export function AppSidebar({ firmName, userName }: { firmName: string; userName:
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV.map(({ href, label, icon: Icon }) => (
-                <SidebarMenuItem key={href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={href === "/app" ? pathname === href : pathname.startsWith(href)}
-                  >
-                    <Link href={href} onClick={() => setOpenMobile(false)}>
-                      <Icon />
-                      <span>{label}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {NAV.map(({ href, label, icon: Icon }) => {
+                const active = href === "/app" ? pathname === href : pathname.startsWith(href);
+                return (
+                  <SidebarMenuItem key={href}>
+                    <SidebarMenuButton asChild isActive={active}>
+                      <Link
+                        href={href}
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => setOpenMobile(false)}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
