@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireAdmin } from "@/lib/auth";
+import { getContactClientIds, requireAdmin, requireStaff } from "@/lib/auth";
 import { sendEmails } from "@/lib/email/send";
 import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
@@ -98,4 +98,28 @@ export async function removeStaff(userId: string): Promise<ActionResult> {
 
   revalidatePath("/app/settings");
   return { ok: true };
+}
+
+/**
+ * A staff member (not an admin) leaves the firm, for example after being added by
+ * mistake. Returns where to go next: the portal for someone who is also a contact.
+ */
+export async function leaveFirm(): Promise<ActionResult<{ next: string }>> {
+  const staff = await requireStaff();
+  if (staff.role !== "staff") {
+    return { ok: false, error: "An admin must make you staff before you can leave." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("firm_members")
+    .delete()
+    .eq("firm_id", staff.firmId)
+    .eq("user_id", staff.userId)
+    .select("user_id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!data) return fail(staleState);
+
+  return { ok: true, data: { next: (await getContactClientIds()).length > 0 ? "/portal" : "/onboarding" } };
 }

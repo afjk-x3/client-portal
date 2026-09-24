@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { FirmNameForm } from "./firm-name-form";
+import { LeaveFirm } from "./leave-firm";
 import { Team } from "./team";
 
 export default function SettingsPage() {
@@ -40,6 +41,7 @@ async function Settings() {
           role: m.role === "admin" ? "admin" : "staff",
         }))}
       />
+      {!isAdmin && <LeaveFirm firmName={firm.data.name} />}
     </>
   );
 }
