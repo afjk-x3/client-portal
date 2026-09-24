@@ -1,0 +1,86 @@
+-- Shared pgTAP fixture. Include it with \ir right after plan().
+--
+-- Firm A: admin a1, staff a2, clients A1 (contact c1) and A2 (contact c2).
+-- Firm B: admin b1, client B1 (contact c3). User d1 belongs to nothing.
+-- Requests: A1 open (items a1 file+file, a3 text, a4 optional file),
+--           A1 draft (item a9), A2 open (item a2 + file), B1 open (item b1 + file).
+--
+-- IDs: users 00000000-…-0000000000xx, firms f…0a/f…0b, clients c…,
+--      templates 7…, requests d…, items 1…, files e…
+
+create schema tests;
+grant usage on schema tests to authenticated;
+
+-- Act as a signed-in user for the rest of the transaction, as PostgREST does.
+create function tests.login_as(user_id uuid, email text default null)
+returns void
+language sql
+as $$
+  select set_config('role', 'authenticated', true),
+         set_config(
+           'request.jwt.claims',
+           json_build_object('sub', user_id, 'role', 'authenticated', 'email', email)::text,
+           true
+         );
+$$;
+grant execute on function tests.login_as(uuid, text) to authenticated;
+
+insert into auth.users (id, email) values
+  ('00000000-0000-0000-0000-0000000000a1', 'admin-a@test.local'),
+  ('00000000-0000-0000-0000-0000000000a2', 'staff-a@test.local'),
+  ('00000000-0000-0000-0000-0000000000b1', 'admin-b@test.local'),
+  ('00000000-0000-0000-0000-0000000000c1', 'contact-a1@test.local'),
+  ('00000000-0000-0000-0000-0000000000c2', 'contact-a2@test.local'),
+  ('00000000-0000-0000-0000-0000000000c3', 'contact-b1@test.local'),
+  ('00000000-0000-0000-0000-0000000000d1', 'nobody@test.local');
+
+insert into public.firms (id, name) values
+  ('f0000000-0000-0000-0000-00000000000a', 'Firm A'),
+  ('f0000000-0000-0000-0000-00000000000b', 'Firm B');
+
+insert into public.firm_members (firm_id, user_id, role, full_name, email) values
+  ('f0000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1', 'admin', 'Admin A', 'admin-a@test.local'),
+  ('f0000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a2', 'staff', 'Staff A', 'staff-a@test.local'),
+  ('f0000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-0000000000b1', 'admin', 'Admin B', 'admin-b@test.local');
+
+insert into public.clients (id, firm_id, name) values
+  ('c0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 'Client A1'),
+  ('c0000000-0000-0000-0000-0000000000a2', 'f0000000-0000-0000-0000-00000000000a', 'Client A2'),
+  ('c0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b', 'Client B1');
+
+insert into public.client_contacts (client_id, firm_id, user_id, full_name, email) values
+  ('c0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000c1', 'Contact A1', 'contact-a1@test.local'),
+  ('c0000000-0000-0000-0000-0000000000a2', 'f0000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000c2', 'Contact A2', 'contact-a2@test.local'),
+  ('c0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-0000000000c3', 'Contact B1', 'contact-b1@test.local');
+
+insert into public.templates (id, firm_id, name) values
+  ('70000000-0000-0000-0000-00000000000a', 'f0000000-0000-0000-0000-00000000000a', 'Template A'),
+  ('70000000-0000-0000-0000-00000000000b', 'f0000000-0000-0000-0000-00000000000b', 'Template B');
+
+insert into public.template_items (template_id, firm_id, position, title, kind) values
+  ('70000000-0000-0000-0000-00000000000a', 'f0000000-0000-0000-0000-00000000000a', 1, 'Photo ID', 'file'),
+  ('70000000-0000-0000-0000-00000000000b', 'f0000000-0000-0000-0000-00000000000b', 1, 'Photo ID', 'file');
+
+insert into public.requests (id, firm_id, client_id, title, due_date, status, sent_at) values
+  ('d0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 'c0000000-0000-0000-0000-0000000000a1', 'A1 open', current_date + 7, 'open', now()),
+  ('d0000000-0000-0000-0000-0000000000a9', 'f0000000-0000-0000-0000-00000000000a', 'c0000000-0000-0000-0000-0000000000a1', 'A1 draft', current_date + 7, 'draft', null),
+  ('d0000000-0000-0000-0000-0000000000a2', 'f0000000-0000-0000-0000-00000000000a', 'c0000000-0000-0000-0000-0000000000a2', 'A2 open', current_date + 7, 'open', now()),
+  ('d0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b', 'c0000000-0000-0000-0000-0000000000b1', 'B1 open', current_date + 7, 'open', now());
+
+insert into public.request_items (id, request_id, firm_id, position, title, kind, required) values
+  ('10000000-0000-0000-0000-0000000000a1', 'd0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 1, 'A1 file', 'file', true),
+  ('10000000-0000-0000-0000-0000000000a3', 'd0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 2, 'A1 text', 'text', true),
+  ('10000000-0000-0000-0000-0000000000a4', 'd0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 3, 'A1 optional file', 'file', false),
+  ('10000000-0000-0000-0000-0000000000a9', 'd0000000-0000-0000-0000-0000000000a9', 'f0000000-0000-0000-0000-00000000000a', 1, 'A1 draft item', 'file', true),
+  ('10000000-0000-0000-0000-0000000000a2', 'd0000000-0000-0000-0000-0000000000a2', 'f0000000-0000-0000-0000-00000000000a', 1, 'A2 file', 'file', true),
+  ('10000000-0000-0000-0000-0000000000b1', 'd0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b', 1, 'B1 file', 'file', true);
+
+insert into storage.objects (bucket_id, name, metadata) values
+  ('documents', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/seed-a1.pdf', '{"size": 100, "mimetype": "application/pdf"}'),
+  ('documents', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a2/10000000-0000-0000-0000-0000000000a2/seed-a2.pdf', '{"size": 100, "mimetype": "application/pdf"}'),
+  ('documents', 'f0000000-0000-0000-0000-00000000000b/c0000000-0000-0000-0000-0000000000b1/10000000-0000-0000-0000-0000000000b1/seed-b1.pdf', '{"size": 100, "mimetype": "application/pdf"}');
+
+insert into public.item_files (id, item_id, firm_id, storage_path, filename, size_bytes, mime) values
+  ('e0000000-0000-0000-0000-0000000000a1', '10000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/seed-a1.pdf', 'seed-a1.pdf', 100, 'application/pdf'),
+  ('e0000000-0000-0000-0000-0000000000a2', '10000000-0000-0000-0000-0000000000a2', 'f0000000-0000-0000-0000-00000000000a', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a2/10000000-0000-0000-0000-0000000000a2/seed-a2.pdf', 'seed-a2.pdf', 100, 'application/pdf'),
+  ('e0000000-0000-0000-0000-0000000000b1', '10000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b', 'f0000000-0000-0000-0000-00000000000b/c0000000-0000-0000-0000-0000000000b1/10000000-0000-0000-0000-0000000000b1/seed-b1.pdf', 'seed-b1.pdf', 100, 'application/pdf');
