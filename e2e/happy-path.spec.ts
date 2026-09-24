@@ -1,0 +1,27 @@
+import { expect, test, type Page } from "@playwright/test";
+import { readSignInCode } from "./mailpit";
+
+const run = Date.now();
+const staffEmail = `staff-${run}@example.com`;
+
+async function signIn(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByRole("textbox", { name: "Email" }).fill(email);
+  await page.getByRole("button", { name: "Send code" }).click();
+  const code = page.getByRole("textbox", { name: "Code" });
+  await expect(code).toBeVisible();
+  await code.fill(await readSignInCode(email));
+  await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+test("a firm collects a document from a client", async ({ browser }) => {
+  const staff = await (await browser.newContext()).newPage();
+
+  // 1. Staff signs up and creates a firm.
+  await signIn(staff, staffEmail);
+  await expect(staff).toHaveURL(/\/onboarding$/);
+  await staff.getByRole("textbox", { name: "Firm name" }).fill("Ledger & Co");
+  await staff.getByRole("textbox", { name: "Your full name" }).fill("Sam Staff");
+  await staff.getByRole("button", { name: "Create firm" }).click();
+  await expect(staff.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+});
