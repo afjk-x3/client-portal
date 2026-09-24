@@ -27,7 +27,7 @@ Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY
 |---|---|
 | `npm test` | Vitest unit tests |
 | `npm run test:db` | pgTAP tests for tenant isolation, RPCs, and storage (local Supabase) |
-| `npm run test:e2e` | The Playwright happy path (starts `npm run dev`) |
+| `npm run test:e2e` | The Playwright end-to-end tests (starts `npm run dev`) |
 | `npm run typecheck` | Route type generation and `tsc` |
 | `npm run lint` | ESLint |
 

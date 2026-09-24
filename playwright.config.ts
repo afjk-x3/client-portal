@@ -5,6 +5,8 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 120_000,
+  // One at a time: the specs share one database, and the cron checks count every firm in it.
+  workers: 1,
   expect: { timeout: 15_000 },
   use: {
     baseURL: "http://localhost:3000",
@@ -12,9 +14,10 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "npm run dev",
+    // CI tests a production build; locally the dev server starts faster and can be reused.
+    command: process.env.CI ? "npm run build && npm run start" : "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 300_000,
   },
 });
