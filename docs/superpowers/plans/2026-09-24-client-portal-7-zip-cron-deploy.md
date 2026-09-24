@@ -399,7 +399,7 @@ Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY
 |---|---|
 | `npm test` | Vitest unit tests |
 | `npm run test:db` | pgTAP tests for tenant isolation, RPCs, and storage (local Supabase) |
-| `npm run test:e2e` | The Playwright happy path (starts `npm run dev`) |
+| `npm run test:e2e` | The Playwright end-to-end tests (starts `npm run dev`) |
 | `npm run typecheck` | Route type generation and `tsc` |
 | `npm run lint` | ESLint |
 
@@ -456,7 +456,7 @@ npm run build
 npm run test:e2e
 ```
 
-Expected: pgTAP `Files=14, Tests=193, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
+Expected: pgTAP `Files=15, Tests=198, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
 
 Optionally run `npx supabase db advisors --local`. It reports only `multiple_permissive_policies` warnings: the staff and contact read rules are separate policies on purpose, one per actor, to match spec section 8.2.
 

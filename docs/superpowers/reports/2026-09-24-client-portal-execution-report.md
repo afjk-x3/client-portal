@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24, all phases implemented; Phase 6 and 7 reviews in progress
+- **Last updated:** 2026-09-24, all phases implemented and Phase 3–6 review fixes applied; Phase 7 review in progress
 
 This report is updated and pushed after every phase, so it stays current if the session ends.
 
@@ -16,7 +16,7 @@ This report is updated and pushed after every phase, so it stays current if the 
 | 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `e865b32`. |
 | 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d5477f7`. |
 | 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d5477f7`. pgTAP now 193. |
-| 6 Client portal and files | Done | The complete end-to-end test passes. Review in progress (the first run stopped at the usage limit). |
+| 6 Client portal and files | Done | The complete end-to-end test passes. Review: four Important (upload queue froze, garbled download names, contacts could choose the saved extension, phone layout) and several Minor, fixed in `eb8372c`. pgTAP now 198. |
 | 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Final checks: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review in progress. |
 
 ## Commits so far
@@ -55,6 +55,7 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `1be7bd5` | Phase 7 Task 2: daily reminders and staff digest cron |
 | `d5477f7` | Phase 4 and 5 review fixes |
 | `cff0fb0` | Phase 7 Task 3: README (setup, testing, deployment) |
+| `eb8372c` | Phase 6 review fixes |
 
 ## Deviations from the plan
 
@@ -90,6 +91,13 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **Review actions on closed requests (Important).** Returning an item on an archived request emailed a client whose portal is read-only. Accept and Needs changes now require an open or completed request.
   - **Minor:** removing an item could delete a file registered at the same moment (now `remove_item`, under the same row lock as `register_file`); "Edit details" kept a cancelled due date; dialogs and the review Sheet stayed open on hidden pages; a thrown save error discarded the editor's work; clicking the picked day cleared the due date.
   - **Not changed:** unarchive is still two writes (reopen, then recompute); if the recompute fails, a complete request shows Open until its next item change, and it gets no reminders because it has no open items.
+
+- **Phase 6** (code review with live probes of every portal action and the download route; the first run stopped at the usage limit and was rerun). Contact isolation, server-built upload paths, the bucket's size and type limits, and the 20-file cap all held. Fixed:
+  - **Upload queue froze (Important).** A dropped connection or a deployment during an upload made the action call throw; that file stayed "Uploading…", every later file stayed "Waiting…", and Submit stayed disabled until a full reload. Errors are now caught and the queue moves on.
+  - **Garbled download names (Important).** storage-js encoded the `download` name twice, so "Scan (1).pdf" saved as "Scan %281%29.pdf". The route now sets it on the signed URL itself; an end-to-end check downloads "Scan (1) résumé.pdf" and compares the name.
+  - **Contacts could choose the saved extension (Important).** The bucket checks only the declared type, and `register_file` stored names as given, so a PDF registered as `statement.pdf     .js` downloaded as a script. `register_file` now keeps only an extension that matches the stored type and appends the type's own otherwise (migration `20260925000900_file_names.sql`, 5 new pgTAP tests).
+  - **Phone layout (Important).** A failed upload row pushed the page wider than a 375 px screen and hid the file name; failed rows now wrap.
+  - **Minor:** unusable files are refused before queueing, failed rows can be dismissed, a failed registration deletes its upload (no orphans on retry), files dropped outside the drop zone are ignored, the orphan log also catches Storage's silent refusals, the portal shows an empty state when a contact has no sent requests, and buttons name their file or item for screen readers.
 
 ## Blockers
 

@@ -340,6 +340,8 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   timeout: 120_000,
+  // One at a time: the specs share one database, and the cron checks count every firm in it.
+  workers: 1,
   expect: { timeout: 15_000 },
   use: {
     baseURL: "http://localhost:3000",

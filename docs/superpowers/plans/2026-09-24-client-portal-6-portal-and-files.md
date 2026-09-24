@@ -200,7 +200,7 @@ export function progressPercent(items: { required: boolean; status: string }[]):
 
 - [ ] **Step 3: Add the request list**
 
-Create `app/portal/page.tsx`. It filters by the user's own contact client ids and excludes drafts explicitly: a user who is also staff can see their whole firm's requests through the staff policy, and those do not belong in their portal. `requests` has no direct foreign key to `firms`, so the firm name comes through `clients(firms(name))`.
+Create `app/portal/page.tsx`. It filters by the user's own contact client ids and excludes drafts explicitly: a user who is also staff can see their whole firm's requests through the staff policy, and those do not belong in their portal. `requests` has no direct foreign key to `firms`, so the firm name comes through `clients(firms(name))`. A contact with no sent requests gets the empty state.
 
 ```tsx
 import { Suspense } from "react";
@@ -228,10 +228,9 @@ export default function PortalPage() {
 type Row = { id: string; title: string; status: string; dueDate: string; progress: number };
 
 async function Requests() {
+  const empty = <p className="text-sm text-muted-foreground">You don&apos;t have any requests yet.</p>;
   const clientIds = await getContactClientIds();
-  if (clientIds.length === 0) {
-    return <p className="text-sm text-muted-foreground">You don&apos;t have any requests yet.</p>;
-  }
+  if (clientIds.length === 0) return empty;
 
   const supabase = await createClient();
   const { data: requests, error } = await supabase
@@ -241,6 +240,7 @@ async function Requests() {
     .neq("status", "draft")
     .order("due_date");
   if (error) throw error;
+  if (requests.length === 0) return empty;
 
   const firms = new Map<string, { name: string; open: Row[]; past: Row[] }>();
   for (const request of requests) {
@@ -315,9 +315,157 @@ Expected: still FAIL, later: the contact sees "2026 tax documents" and opens it,
 ## Task 3: Request page, uploads, submit, and downloads
 
 **Files:**
-- Create: `app/portal/requests/[id]/actions.ts`, `app/portal/requests/[id]/item-card.tsx`, `app/portal/requests/[id]/page.tsx`, `app/api/files/[id]/route.ts`
+- Create: `supabase/migrations/20260925000900_file_names.sql`, `app/portal/requests/[id]/actions.ts`, `app/portal/requests/[id]/item-card.tsx`, `app/portal/requests/[id]/page.tsx`, `app/api/files/[id]/route.ts`
+- Test: `supabase/tests/file_names_test.sql`
 
-- [ ] **Step 1: Add the portal actions**
+- [ ] **Step 1: Write the file name test**
+
+The bucket checks only the declared type, and `register_file` stored the name as given, so a contact could register a PDF as `statement.pdf     .js` and staff would download a script. Since contacts can call the RPC directly, the fix belongs in the database. Create `supabase/tests/file_names_test.sql`:
+
+```sql
+-- register_file keeps an extension that matches the file's type and appends
+-- the type's own otherwise, so a download never saves under another type.
+begin;
+select plan(5);
+\ir fixtures/seed.psql
+
+create temp table a4 (prefix text) on commit drop;
+insert into a4 values ('f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/');
+grant select on a4 to authenticated;
+insert into storage.objects (bucket_id, name, metadata)
+select 'documents', a4.prefix || v.n || '.bin', jsonb_build_object('size', 1, 'mimetype', v.mime)
+from a4, (values ('1', 'application/pdf'), ('2', 'application/pdf'), ('3', 'application/pdf'),
+                 ('4', 'image/jpeg'), ('5', 'image/jpeg')) as v(n, mime);
+
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+-- Registers object n under the given name and returns the name that was stored.
+create function pg_temp.registered(n text, filename text) returns text language plpgsql as $$
+declare
+  v_id uuid := public.register_file('10000000-0000-0000-0000-0000000000a4', (select prefix from a4) || n || '.bin', filename);
+begin
+  return (select f.filename from public.item_files f where f.id = v_id);
+end;
+$$;
+
+select is(pg_temp.registered('1', 'My W-2.pdf'), 'My W-2.pdf', 'a matching extension is kept');
+select is(pg_temp.registered('2', 'report'), 'report.pdf', 'a missing extension is added');
+select is(pg_temp.registered('3', 'scan.pdf     .js'), 'scan.pdf     .js.pdf', 'a different extension gets the type''s own appended');
+select is(pg_temp.registered('4', 'Photo.JPEG'), 'Photo.JPEG', 'any of the type''s extensions is kept, in any case');
+select is(pg_temp.registered('5', 'photo.png'), 'photo.png.jpg', 'another image extension is not trusted either');
+
+select * from finish();
+rollback;
+```
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: FAIL: `file_names_test.sql` reports `Looks like you failed 3 tests of 5`.
+
+- [ ] **Step 2: Add the migration**
+
+Create `supabase/migrations/20260925000900_file_names.sql`. It replaces `register_file`: a name keeps an extension that matches the stored type, and otherwise gets the type's own appended, so honest uploads (a scan named "Statement") are never refused.
+
+```sql
+-- Replaces register_file from 20260925000500. The stored name always ends in
+-- an extension that matches the object's type. The bucket checks only the
+-- declared type, so a name like "statement.pdf     .js" would otherwise save
+-- as a script when staff download it. A missing or different extension gets
+-- the type's own appended, so honest uploads are never refused.
+create or replace function public.register_file(item_id uuid, storage_path text, filename text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_firm_id uuid;
+  v_client_id uuid;
+  v_kind text;
+  v_status text;
+  v_request_status text;
+  v_size bigint;
+  v_mime text;
+  v_extensions text[];
+  v_filename text := register_file.filename;
+  v_file_id uuid;
+begin
+  select i.firm_id, r.client_id, i.kind, i.status, r.status
+  into v_firm_id, v_client_id, v_kind, v_status, v_request_status
+  from public.request_items i
+  join public.requests r on r.id = i.request_id
+  where i.id = register_file.item_id
+    and r.status <> 'draft'
+    and public.is_client_contact(r.client_id)
+  for update of i;
+
+  if not found then
+    raise exception 'not_allowed';
+  end if;
+  if v_request_status <> 'open'
+     or v_status not in ('requested', 'needs_changes')
+     or v_kind <> 'file' then
+    raise exception 'invalid_state';
+  end if;
+  if not starts_with(
+    register_file.storage_path,
+    v_firm_id::text || '/' || v_client_id::text || '/' || register_file.item_id::text || '/'
+  ) then
+    raise exception 'not_allowed';
+  end if;
+
+  select (o.metadata ->> 'size')::bigint, o.metadata ->> 'mimetype'
+  into v_size, v_mime
+  from storage.objects o
+  where o.bucket_id = 'documents'
+    and o.name = register_file.storage_path;
+
+  if not found then
+    raise exception 'not_allowed';
+  end if;
+  if (select count(*) from public.item_files f where f.item_id = register_file.item_id) >= 20 then
+    raise exception 'invalid_state';
+  end if;
+
+  -- Must match MIME_BY_EXTENSION in lib/files.ts and the bucket's allowed types.
+  v_extensions := case v_mime
+    when 'application/pdf' then array['pdf']
+    when 'image/jpeg' then array['jpg', 'jpeg']
+    when 'image/png' then array['png']
+    when 'image/webp' then array['webp']
+    when 'image/heic' then array['heic']
+    when 'text/csv' then array['csv']
+    when 'application/vnd.ms-excel' then array['xls']
+    when 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' then array['xlsx']
+    when 'application/msword' then array['doc']
+    when 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' then array['docx']
+  end;
+  if v_extensions is null then
+    raise exception 'not_allowed';
+  end if;
+  if not coalesce(lower(substring(v_filename from '\.([^.]+)$')) = any (v_extensions), false) then
+    v_filename := left(v_filename, 250) || '.' || v_extensions[1];
+  end if;
+
+  insert into public.item_files (item_id, firm_id, storage_path, filename, size_bytes, mime, uploaded_by)
+  values (
+    register_file.item_id,
+    v_firm_id,
+    register_file.storage_path,
+    v_filename,
+    coalesce(v_size, 0),
+    v_mime,
+    (select auth.uid())
+  )
+  returning id into v_file_id;
+
+  return v_file_id;
+end;
+$$;
+```
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: `Files=15, Tests=198`, `Result: PASS`.
+
+- [ ] **Step 3: Add the portal actions**
 
 Create `app/portal/requests/[id]/actions.ts`. `createUploadUrl` checks `can_write_document` explicitly before creating the signed URL, so safety does not depend on when Storage evaluates its insert policy for signed uploads. It also refuses once the item has 20 files, before anything is uploaded. The contact is never trusted for the path: the action builds it from the item's firm and client.
 
@@ -329,7 +477,7 @@ import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { storagePath } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
-import { filenameSchema, textAnswerSchema } from "@/lib/validation";
+import { filenameSchema, isId, textAnswerSchema } from "@/lib/validation";
 
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
@@ -344,6 +492,7 @@ export async function createUploadUrl(
   itemId: string,
   filename: string,
 ): Promise<ActionResult<{ path: string; token: string }>> {
+  if (!isId(itemId)) return fail(notFound);
   const name = filenameSchema.safeParse(filename);
   if (!name.success) return invalid(name.error);
 
@@ -376,6 +525,7 @@ export async function createUploadUrl(
 }
 
 export async function registerFile(itemId: string, path: string, filename: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
   const name = filenameSchema.safeParse(filename);
   if (!name.success) return invalid(name.error);
 
@@ -392,15 +542,17 @@ export async function registerFile(itemId: string, path: string, filename: strin
 }
 
 export async function removeFile(fileId: string): Promise<ActionResult> {
+  if (!isId(fileId)) return fail(notFound);
   const supabase = await createClient();
   const { data: path, error } = await supabase.rpc("remove_file", { file_id: fileId });
   if (error) return fail(error);
 
-  const { error: storageError } = await supabase.storage.from("documents").remove([path]);
-  if (storageError) {
+  // Storage reports a refused delete as success with no rows, not as an error.
+  const { data: removed, error: storageError } = await supabase.storage.from("documents").remove([path]);
+  if (storageError || removed.length === 0) {
     // ponytail: the object is orphaned when this delete fails after remove_file.
     // Upgrade path: a nightly cleanup of objects that have no item_files row.
-    console.error("Storage delete failed after remove_file", storageError);
+    console.error("Storage delete failed after remove_file", storageError ?? path);
   }
 
   revalidateRequestPages();
@@ -409,6 +561,7 @@ export async function removeFile(fileId: string): Promise<ActionResult> {
 
 /** File items pass no answer; text items pass the answer. */
 export async function submitItem(itemId: string, answer?: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
   let textAnswer: string | undefined;
   if (answer !== undefined) {
     const parsed = textAnswerSchema.safeParse(answer);
@@ -425,7 +578,7 @@ export async function submitItem(itemId: string, answer?: string): Promise<Actio
 }
 ```
 
-- [ ] **Step 2: Add the item card**
+- [ ] **Step 4: Add the item card**
 
 Create `app/portal/requests/[id]/item-card.tsx`. Notes:
 - The browser-side type and size checks are for the user only; the bucket and the policies enforce the real limits.
@@ -433,12 +586,17 @@ Create `app/portal/requests/[id]/item-card.tsx`. Notes:
 - Files upload one at a time through a promise queue; each shows "Waiting…", "Uploading…", or its error with a Retry button. A finished upload disappears from the queue and shows up in the file list after the page revalidates.
 - The item is editable only while the request is `open` and the item is `requested` or `needs_changes`.
 - The picker hides once the item holds 20 files, counting queued uploads, and extra files in one drop are refused with a toast.
+- A file of the wrong type or over 25 MB is refused with a toast before it is queued, since retrying could not help. A failed row can be retried or dismissed, and wraps below the name on a phone.
+- A thrown action call (a dropped connection, a new deployment) marks that file failed, and the queue moves on: it is chained with `.then(run, run)`.
+- When registration fails, the upload is deleted (contacts may delete unregistered uploads), so a retry leaves no orphan behind.
+- A file dropped outside the drop zone is ignored instead of replacing the page.
+- Buttons and links name their file or item for screen readers ("Download Scan.pdf", "Submit Photo ID"), and the upload list is a polite live region.
 - The written answer submits through `submitKeepingValues()`, so an error keeps what the contact typed.
 
 ```tsx
 "use client";
 
-import { useActionState, useRef, useState, type DragEvent } from "react";
+import { useActionState, useEffect, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
@@ -503,32 +661,54 @@ function formatSize(bytes: number) {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Section 10.5: create a signed URL, upload straight to Storage, then register the file. */
-async function uploadOne(itemId: string, file: File): Promise<string | null> {
-  const type = uploadMimeType(file);
-  if (!type) return "This file type is not accepted.";
-  if (file.size > MAX_FILE_BYTES) return "Files must be 25 MB or smaller.";
+/** Why a file can never be uploaded (so retrying cannot help), or null. */
+function rejection(file: File): string | null {
+  if (!uploadMimeType(file)) return `${file.name}: this file type is not accepted.`;
+  if (file.size > MAX_FILE_BYTES) return `${file.name}: files must be 25 MB or smaller.`;
+  return null;
+}
 
+/**
+ * Section 10.5: create a signed URL, upload straight to Storage, then register
+ * the file. Returns an error message, or null when the file is registered.
+ */
+async function uploadOne(itemId: string, file: File): Promise<string | null> {
+  const type = uploadMimeType(file)!;
   const created = await createUploadUrl(itemId, file.name);
   if (!created.ok) return created.error;
   const { path, token } = created.data!;
 
+  const storage = createClient().storage.from("documents");
   const body = type === file.type ? file : new File([file], file.name, { type });
-  const { error } = await createClient().storage.from("documents").uploadToSignedUrl(path, token, body, {
-    contentType: type,
-  });
+  const { error } = await storage.uploadToSignedUrl(path, token, body, { contentType: type });
   if (error) return "Upload failed. Check your connection and retry.";
 
-  // ponytail: the object is orphaned if register_file fails after the upload.
-  // Upgrade path: a nightly cleanup of objects that have no item_files row.
   const registered = await registerFile(itemId, path, file.name);
-  return registered.ok ? null : registered.error;
+  if (registered.ok) return null;
+  // The object is not registered, so the contact may still delete it; a retry uploads it again.
+  // ponytail: the object is orphaned if this delete fails too. Upgrade path: a nightly
+  // cleanup of objects that have no item_files row.
+  await storage.remove([path]);
+  return registered.error;
 }
 
 function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
+
+  // A file dropped outside the drop zone would replace the page, and uploads in progress with it.
+  useEffect(() => {
+    function ignoreFileDrop(event: globalThis.DragEvent) {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    }
+    window.addEventListener("dragover", ignoreFileDrop);
+    window.addEventListener("drop", ignoreFileDrop);
+    return () => {
+      window.removeEventListener("dragover", ignoreFileDrop);
+      window.removeEventListener("drop", ignoreFileDrop);
+    };
+  }, []);
 
   function update(key: string, patch: Partial<Upload> | null) {
     setUploads((current) =>
@@ -538,17 +718,29 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
 
   // One file at a time, in the order they were added.
   function enqueue(upload: Upload) {
-    queue.current = queue.current.then(async () => {
+    async function run() {
       update(upload.key, { status: "uploading", error: undefined });
-      const error = await uploadOne(item.id, upload.file);
+      let error: string | null;
+      try {
+        error = await uploadOne(item.id, upload.file);
+      } catch {
+        // A dropped connection or a new deployment makes the action call throw.
+        error = "Upload failed. Check your connection and retry.";
+      }
       update(upload.key, error ? { status: "failed", error } : null);
-    });
+    }
+    queue.current = queue.current.then(run, run);
   }
 
   const room = MAX_FILES_PER_ITEM - item.files.length - uploads.length;
 
   function addFiles(files: FileList | null) {
-    const picked = Array.from(files ?? []);
+    const picked: File[] = [];
+    for (const file of Array.from(files ?? [])) {
+      const reason = rejection(file);
+      if (reason) toast.error(reason);
+      else picked.push(file);
+    }
     if (picked.length > room) toast.error(`An item can have at most ${MAX_FILES_PER_ITEM} files.`);
     const added = picked
       .slice(0, Math.max(0, room))
@@ -575,11 +767,17 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
                 {file.filename} <span className="text-muted-foreground">({formatSize(file.sizeBytes)})</span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <a className="underline" href={`/api/files/${file.id}?download=1`}>
+                <a className="underline" href={`/api/files/${file.id}?download=1`} aria-label={`Download ${file.filename}`}>
                   Download
                 </a>
                 {editable && (
-                  <ActionButton variant="ghost" size="sm" action={() => removeFile(file.id)} success="File removed.">
+                  <ActionButton
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove ${file.filename}`}
+                    action={() => removeFile(file.id)}
+                    success="File removed."
+                  >
                     Remove
                   </ActionButton>
                 )}
@@ -589,19 +787,32 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         </ul>
       )}
       {uploads.length > 0 && (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-3" aria-live="polite">
           {uploads.map((upload) => (
-            <li key={upload.key} className="flex items-center justify-between gap-2 text-sm">
+            <li key={upload.key} className="flex flex-col gap-1 text-sm">
               <span className="truncate">{upload.file.name}</span>
               {upload.status === "failed" ? (
-                <span className="flex shrink-0 items-center gap-2 text-destructive">
-                  {upload.error}
-                  <Button variant="outline" size="sm" onClick={() => enqueue(upload)}>
+                <span className="flex flex-wrap items-center gap-2 text-destructive">
+                  <span>{upload.error}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Retry ${upload.file.name}`}
+                    onClick={() => enqueue(upload)}
+                  >
                     Retry
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Dismiss ${upload.file.name}`}
+                    onClick={() => update(upload.key, null)}
+                  >
+                    Dismiss
                   </Button>
                 </span>
               ) : (
-                <span className="shrink-0 text-muted-foreground">
+                <span className="text-muted-foreground">
                   {upload.status === "uploading" ? "Uploading…" : "Waiting…"}
                 </span>
               )}
@@ -617,7 +828,7 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
-          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm ${
+          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm focus-within:ring-[3px] focus-within:ring-ring/50 ${
             dragging ? "bg-muted" : ""
           }`}
         >
@@ -639,6 +850,7 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         <ActionButton
           className="self-start"
           disabled={item.files.length === 0 || busy}
+          aria-label={`Submit ${item.title}`}
           action={() => submitItem(item.id)}
           success="Submitted. We'll let you know if anything else is needed."
         >
@@ -670,7 +882,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
         rows={4}
         required
       />
-      <Button type="submit" className="self-start" disabled={pending}>
+      <Button type="submit" className="self-start" disabled={pending} aria-label={`Submit ${item.title}`}>
         Submit
       </Button>
     </form>
@@ -678,7 +890,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
 }
 ```
 
-- [ ] **Step 3: Add the request page**
+- [ ] **Step 5: Add the request page**
 
 Create `app/portal/requests/[id]/page.tsx`:
 
@@ -769,13 +981,14 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
 }
 ```
 
-- [ ] **Step 4: Add the download route**
+- [ ] **Step 6: Add the download route**
 
-Create `app/api/files/[id]/route.ts`. A file the caller cannot see is a 404, never a 403. With `?download=1` the signed URL carries the original filename; otherwise the browser opens the file.
+Create `app/api/files/[id]/route.ts`. A file the caller cannot see is a 404, never a 403. With `?download=1` the signed URL carries the original filename; otherwise the browser opens the file. The route sets `download` on the signed URL itself: storage-js's `download` option encodes the name twice, so "Scan (1).pdf" would save as "Scan %281%29.pdf".
 
 ```ts
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 
 /**
  * Redirects to a 60-second signed URL. RLS on item_files and storage.objects
@@ -783,26 +996,33 @@ import { createClient } from "@/lib/supabase/server";
  */
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/files/[id]">) {
   const { id } = await ctx.params;
+  if (!isId(id)) return new NextResponse("Not found", { status: 404 });
   const supabase = await createClient();
-  const { data: file } = await supabase.from("item_files").select("storage_path, filename").eq("id", id).maybeSingle();
+  const { data: file, error: fileError } = await supabase
+    .from("item_files")
+    .select("storage_path, filename")
+    .eq("id", id)
+    .maybeSingle();
+  if (fileError) throw fileError;
   if (!file) return new NextResponse("Not found", { status: 404 });
 
-  const download = request.nextUrl.searchParams.get("download") === "1";
-  const { data, error } = await supabase.storage
-    .from("documents")
-    .createSignedUrl(file.storage_path, 60, download ? { download: file.filename } : undefined);
+  const { data, error } = await supabase.storage.from("documents").createSignedUrl(file.storage_path, 60);
   if (error) return new NextResponse("Not found", { status: 404 });
 
-  return NextResponse.redirect(data.signedUrl);
+  const url = new URL(data.signedUrl);
+  // Set here rather than through createSignedUrl's `download` option, which
+  // encodes the name twice ("Scan (1).pdf" would save as "Scan %281%29.pdf").
+  if (request.nextUrl.searchParams.get("download") === "1") url.searchParams.set("download", file.filename);
+  return NextResponse.redirect(url);
 }
 ```
 
-- [ ] **Step 5: Run the test to make sure it passes**
+- [ ] **Step 7: Run the test to make sure it passes**
 
 Run: `npm run test:e2e`
 Expected: PASS, `1 passed`. This is the complete spec section 14 test.
 
-- [ ] **Step 6: Check the rest by hand**
+- [ ] **Step 8: Check the rest by hand**
 
 Use two browser profiles (or one normal and one private window) with `npm run dev` running: staff in one, the contact in the other.
 1. As staff, open an item the contact submitted, type "The scan is blurry." under "What needs to change?", and click "Needs changes". Expected: the item shows "Needs changes", the request badge shows "Open", and the dev server logs a `subject="Changes needed: …"` email.
@@ -810,7 +1030,7 @@ Use two browser profiles (or one normal and one private window) with `npm run de
 3. As the contact, click "Download" next to a file. Expected: the original filename downloads. Staff "Open" opens it in a new tab.
 4. Open `/app` as the contact. Expected: redirect to `/portal`. Open `/portal` as a staff user who is nobody's contact. Expected: "You don't have any requests yet."
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 9: Verify and commit**
 
 Run: `npm test && npm run typecheck && npm run lint && npm run build`
 Expected: all succeed.

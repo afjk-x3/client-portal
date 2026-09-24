@@ -519,7 +519,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
 // ponytail: the MIME type is the declared type only, and files are not
 // virus-scanned. Upgrade path: add a scanning step before register_file.
 
-/** Must match allowed_mime_types on the documents bucket. */
+/** Must match allowed_mime_types on the documents bucket and the extensions in register_file. */
 export const ALLOWED_MIME_TYPES: readonly string[] = [...new Set(Object.values(MIME_BY_EXTENSION))];
 
 /** Value for <input type="file" accept>. */
