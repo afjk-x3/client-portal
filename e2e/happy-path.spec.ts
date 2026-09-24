@@ -3,6 +3,7 @@ import { readSignInCode } from "./mailpit";
 
 const run = Date.now();
 const staffEmail = `staff-${run}@example.com`;
+const contactEmail = `contact-${run}@example.com`;
 
 async function signIn(page: Page, email: string) {
   await page.goto("/login");
@@ -24,4 +25,18 @@ test("a firm collects a document from a client", async ({ browser }) => {
   await staff.getByRole("textbox", { name: "Your full name" }).fill("Sam Staff");
   await staff.getByRole("button", { name: "Create firm" }).click();
   await expect(staff.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+  // 2. Staff adds a client with one contact.
+  await staff.getByRole("link", { name: "Clients" }).click();
+  await staff.getByRole("button", { name: "New client" }).click();
+  const clientDialog = staff.getByRole("dialog");
+  await clientDialog.getByRole("textbox", { name: "Name", exact: true }).fill("Pat Client");
+  await clientDialog.getByRole("button", { name: "Save" }).click();
+  await expect(staff.getByRole("heading", { name: "Pat Client" })).toBeVisible();
+  await staff.getByRole("button", { name: "Add contact" }).click();
+  const contactDialog = staff.getByRole("dialog");
+  await contactDialog.getByRole("textbox", { name: "Full name" }).fill("Pat Client");
+  await contactDialog.getByRole("textbox", { name: "Email" }).fill(contactEmail);
+  await contactDialog.getByRole("button", { name: "Add contact" }).click();
+  await expect(staff.getByRole("cell", { name: contactEmail })).toBeVisible();
 });
