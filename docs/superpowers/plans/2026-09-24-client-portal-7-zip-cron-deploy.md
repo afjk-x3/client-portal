@@ -428,6 +428,7 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
 
 2. In the Supabase dashboard, under Authentication:
    - Set the email OTP length to 6.
+   - Keep "Confirm email" on (the default). With it off, anyone could sign up with a password for someone else's address and get a session.
    - Replace the "Magic Link" and "Confirm signup" email templates with `supabase/templates/sign-in-code.html`. It shows `{{ .Token }}` and no link.
    - Configure custom SMTP with Resend.
    - Set the Site URL to the production domain.
@@ -454,7 +455,7 @@ npm run build
 npm run test:e2e
 ```
 
-Expected: pgTAP `Files=10, Tests=130, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
+Expected: pgTAP `Files=12, Tests=173, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
 
 Optionally run `npx supabase db advisors --local`. It reports only `multiple_permissive_policies` warnings: the staff and contact read rules are separate policies on purpose, one per actor, to match spec section 8.2.
 

@@ -878,7 +878,7 @@ export async function StaffShell({ children }: { children: ReactNode }) {
 }
 ```
 
-Create `app/app/app-sidebar.tsx`:
+Create `app/app/app-sidebar.tsx`. On phones the sidebar is a Sheet, so each link also closes it; otherwise it would stay open over the page you navigated to.
 
 ```tsx
 "use client";
@@ -896,6 +896,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 
 const NAV = [
@@ -907,6 +908,7 @@ const NAV = [
 
 export function AppSidebar({ firmName, userName }: { firmName: string; userName: string }) {
   const pathname = usePathname();
+  const { setOpenMobile } = useSidebar();
 
   return (
     <Sidebar>
@@ -923,7 +925,7 @@ export function AppSidebar({ firmName, userName }: { firmName: string; userName:
                     asChild
                     isActive={href === "/app" ? pathname === href : pathname.startsWith(href)}
                   >
-                    <Link href={href}>
+                    <Link href={href} onClick={() => setOpenMobile(false)}>
                       <Icon />
                       <span>{label}</span>
                     </Link>

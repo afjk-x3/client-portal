@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The complete Supabase schema: tables, row level security, the completion trigger, storage access, and RPCs, proven by pgTAP tests for firm isolation and contact isolation.
+**Goal:** The complete Supabase schema: tables, row level security, the completion trigger, storage access, RPCs, and hardening against concurrent changes and account pre-registration, proven by pgTAP tests for firm isolation and contact isolation.
 
-**Architecture:** Five migrations, each written test-first. RLS is the security boundary: helper functions are `security definer` with `search_path = ''`, clients write only through RPCs, and child tables reference parents by `(id, firm_id)` so no row can point into another firm. Tests share one fixture and simulate users by setting `request.jwt.claims`, the way PostgREST does.
+**Architecture:** Six migrations, each written test-first. RLS is the security boundary: helper functions are `security definer` with `search_path = ''`, clients write only through RPCs, and child tables reference parents by `(id, firm_id)` so no row can point into another firm. Tests share one fixture and simulate users by setting `request.jwt.claims`, the way PostgREST does.
 
 **Tech Stack:** Supabase CLI 2.117 (local Postgres 17, Auth, Storage, Mailpit), pgTAP.
 
@@ -25,6 +25,7 @@
 | `supabase/migrations/20260925000300_request_status.sql` | `refresh_request_status` and the completion trigger |
 | `supabase/migrations/20260925000400_storage.sql` | `can_read_document`, `can_write_document`, storage policies |
 | `supabase/migrations/20260925000500_rpcs.sql` | `create_firm`, `submit_item`, `register_file`, `remove_file`, `admin_user_id_by_email` |
+| `supabase/migrations/20260925000600_hardening.sql` | Row locks, fixed request and item links, the admin invariant, document overwrite and delete rules, code-only sign-in |
 | `supabase/tests/fixtures/seed.psql` | Shared fixture, included with `\ir` (not run as a test) |
 | `supabase/tests/*_test.sql` | pgTAP tests |
 | `lib/database.types.ts` | Generated types |
@@ -1731,3 +1732,531 @@ git commit -m "chore: generate database types"
 ```
 
 Regenerate this file after every migration change: `npx supabase db reset && npm run db:types`.
+
+---
+
+## Task 8: Hardening
+
+**Files:**
+- Create: `supabase/migrations/20260925000600_hardening.sql`
+- Test: `supabase/tests/hardening_test.sql`, `supabase/tests/access_rules_test.sql`
+- Modify: `supabase/config.toml`, `lib/database.types.ts` (generated)
+
+Tasks 1–6 hold for one request at a time and for writes that go through RLS. A security review found gaps that show up only under concurrency, through Supabase services that bypass RLS, or through Auth itself:
+- **Completion race.** `refresh_request_status` computes from its own snapshot and locks the request only when it writes. Two reviews on one request could leave it `open` with every required item accepted, or `completed` with an item just returned, which blocks the contact from resubmitting.
+- **Overwrites.** A signed upload URL is checked against the policies only when it is created, and the upload runs as the storage service, which upserts when the token allows it. So a contact who creates their own URL with `upsert: true` could replace a file after staff accepted it.
+- **Dangling files.** A contact could delete a registered object straight through Storage, leaving an `item_files` row that points at nothing.
+- **Deleting sent requests.** Staff could set a sent request back to `draft` and then delete it with the client's files.
+- **Last admin.** Two admins demoting each other at the same moment could leave a firm with none.
+- **Account pre-registration.** Auth still accepts password sign-ups. Someone could register another person's address with a password; when a firm later added that address, `ensureUser()` would link the firm to their account.
+
+`access_rules_test.sql` also pins down existing rules whose weakening broke tenant isolation without failing any test, such as a contact moving their own `client_contacts` row to another firm's client.
+
+- [ ] **Step 1: Write the hardening test**
+
+Create `supabase/tests/hardening_test.sql`:
+
+```sql
+-- Request and item identity, the admin invariant, document read, delete and
+-- overwrite rules, password stripping, and refresh_request_status under RLS.
+begin;
+select plan(20);
+\ir fixtures/seed.psql
+
+set local storage.allow_delete_query = 'true';
+
+-- Requests and items keep their identity.
+select tests.login_as('00000000-0000-0000-0000-0000000000a1');
+select throws_ok($$ update public.requests set status = 'draft'
+  where id = 'd0000000-0000-0000-0000-0000000000a1' $$,
+  'P0001', 'invalid_state', 'a sent request cannot become a draft again');
+select throws_ok($$ update public.requests set client_id = 'c0000000-0000-0000-0000-0000000000a2'
+  where id = 'd0000000-0000-0000-0000-0000000000a1' $$,
+  'P0001', 'invalid_state', 'a request cannot move to another client');
+select throws_ok($$ update public.request_items set request_id = 'd0000000-0000-0000-0000-0000000000a2'
+  where id = '10000000-0000-0000-0000-0000000000a4' $$,
+  'P0001', 'invalid_state', 'an item cannot move to another request');
+select isnt_empty($$ update public.requests set status = 'open', sent_at = now()
+  where id = 'd0000000-0000-0000-0000-0000000000a9' returning 1 $$,
+  'a draft can still be sent');
+
+-- Every firm keeps an admin, even for callers that bypass RLS.
+reset role;
+select throws_ok($$ update public.firm_members set role = 'staff'
+  where user_id = '00000000-0000-0000-0000-0000000000b1' $$,
+  'P0001', 'invalid_state', 'the last admin cannot be demoted');
+select throws_ok($$ delete from public.firm_members
+  where user_id = '00000000-0000-0000-0000-0000000000b1' $$,
+  'P0001', 'invalid_state', 'the last admin cannot be removed');
+update public.firm_members set role = 'admin' where user_id = '00000000-0000-0000-0000-0000000000a2';
+select lives_ok($$ update public.firm_members set role = 'staff'
+  where user_id = '00000000-0000-0000-0000-0000000000a1' $$,
+  'an admin can be demoted while another admin remains');
+insert into public.firms (id, name) values ('f0000000-0000-0000-0000-00000000000c', 'Firm C');
+insert into public.firm_members (firm_id, user_id, role, full_name, email)
+values ('f0000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-0000000000d1', 'admin', 'Nobody', 'nobody@test.local');
+select lives_ok($$ delete from public.firms where id = 'f0000000-0000-0000-0000-00000000000c' $$,
+  'deleting a firm removes its last admin with it');
+
+-- Documents.
+insert into storage.objects (bucket_id, name) values
+  ('documents', 'f0000000-0000-0000-0000-00000000000b/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/wrong-firm.pdf'),
+  ('documents', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/unregistered.pdf');
+
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select is_empty($$ select 1 from storage.objects where name like 'f0000000-0000-0000-0000-00000000000b/%' $$,
+  'a contact cannot read an object whose firm segment is not their client''s firm');
+select is_empty($$ delete from storage.objects where name like '%/seed-a1.pdf' returning 1 $$,
+  'a contact cannot delete an object that is registered as a file');
+select isnt_empty($$ delete from storage.objects where name like '%/unregistered.pdf' returning 1 $$,
+  'a contact can delete an unregistered upload');
+select lives_ok($$ select public.remove_file('e0000000-0000-0000-0000-0000000000a1') $$,
+  'remove_file deletes the file row');
+select isnt_empty($$ delete from storage.objects where name like '%/seed-a1.pdf' returning 1 $$,
+  'after remove_file, the contact can delete the object');
+
+reset role;
+set local role service_role;
+select throws_ok($$ insert into storage.objects (bucket_id, name, version)
+  values ('documents', 'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a2/10000000-0000-0000-0000-0000000000a2/seed-a2.pdf', 'v2')
+  on conflict (bucket_id, name) do update set version = excluded.version $$,
+  'P0001', 'invalid_state', 'an upsert cannot replace a document, even as the storage service');
+select lives_ok($$ update storage.objects set metadata = '{"size": 100, "mimetype": "application/pdf", "eTag": "e1"}'
+  where name like '%/seed-a2.pdf' $$,
+  'metadata updates still work');
+
+-- Passwords are never stored.
+reset role;
+insert into auth.users (id, email, encrypted_password)
+values ('00000000-0000-0000-0000-0000000000e1', 'password@test.local', '$2a$10$abcdefghijklmnopqrstuv');
+select is((select encrypted_password from auth.users where id = '00000000-0000-0000-0000-0000000000e1'),
+  '', 'a password set on sign-up is not stored');
+update auth.users set encrypted_password = '$2a$10$abcdefghijklmnopqrstuv'
+where id = '00000000-0000-0000-0000-0000000000e1';
+select is((select encrypted_password from auth.users where id = '00000000-0000-0000-0000-0000000000e1'),
+  '', 'a password set later is not stored');
+
+-- refresh_request_status locks and updates only rows the caller may update.
+update public.requests set status = 'completed' where id = 'd0000000-0000-0000-0000-0000000000a2';
+select tests.login_as('00000000-0000-0000-0000-0000000000c2');
+select lives_ok($$ select public.refresh_request_status('d0000000-0000-0000-0000-0000000000a2') $$,
+  'a contact can call refresh_request_status');
+reset role;
+select is((select status from public.requests where id = 'd0000000-0000-0000-0000-0000000000a2'),
+  'completed', 'but it changes nothing for them');
+select tests.login_as('00000000-0000-0000-0000-0000000000a1');
+select public.refresh_request_status('d0000000-0000-0000-0000-0000000000a2');
+reset role;
+select is((select status from public.requests where id = 'd0000000-0000-0000-0000-0000000000a2'),
+  'open', 'a staff call recomputes the status');
+
+select * from finish();
+rollback;
+```
+
+- [ ] **Step 2: Write the access rules test**
+
+Create `supabase/tests/access_rules_test.sql`:
+
+```sql
+-- Access rules that guard the tenant and client boundaries: contact writes,
+-- upload paths and item states, RPCs on drafts and archived requests,
+-- catalog-wide guards, users with both roles, and anon.
+begin;
+select plan(23);
+\ir fixtures/seed.psql
+
+set local storage.allow_delete_query = 'true';
+
+-- A contact cannot write client_contacts, not even their own row.
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ insert into public.client_contacts (client_id, firm_id, user_id, full_name, email)
+  values ('c0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b',
+          '00000000-0000-0000-0000-0000000000c1', 'Me', 'contact-a1@test.local') $$,
+  '42501', null, 'a contact cannot add contact rows');
+select is_empty($$ update public.client_contacts
+  set client_id = 'c0000000-0000-0000-0000-0000000000b1', firm_id = 'f0000000-0000-0000-0000-00000000000b'
+  where user_id = '00000000-0000-0000-0000-0000000000c1' returning 1 $$,
+  'a contact cannot move their own contact row to another client');
+select is_empty($$ delete from public.client_contacts
+  where user_id = '00000000-0000-0000-0000-0000000000c1' returning 1 $$,
+  'a contact cannot delete their own contact row');
+
+-- Uploads need the item's own firm and an open item.
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000b/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/new.pdf') $$,
+  '42501', null, 'the firm segment must match the item');
+reset role;
+update public.request_items set status = 'submitted' where id = '10000000-0000-0000-0000-0000000000a4';
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/new.pdf') $$,
+  '42501', null, 'a contact cannot upload to a submitted item');
+reset role;
+update public.request_items set status = 'accepted' where id = '10000000-0000-0000-0000-0000000000a4';
+insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/kept.pdf');
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/new.pdf') $$,
+  '42501', null, 'a contact cannot upload to an accepted item');
+select is_empty($$ delete from storage.objects where name like '%/kept.pdf' returning 1 $$,
+  'a contact cannot delete from an accepted item');
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+select is_empty($$ delete from storage.objects where bucket_id = 'documents' returning 1 $$,
+  'staff cannot delete objects');
+
+-- File RPCs treat drafts as not found and refuse archived requests.
+reset role;
+insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a9/draft.pdf');
+insert into public.item_files (id, item_id, firm_id, storage_path, filename, size_bytes, mime) values
+  ('e0000000-0000-0000-0000-0000000000a9', '10000000-0000-0000-0000-0000000000a9', 'f0000000-0000-0000-0000-00000000000a',
+   'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a9/draft.pdf',
+   'draft.pdf', 1, 'application/pdf');
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ select public.register_file('10000000-0000-0000-0000-0000000000a9',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a9/draft.pdf', 'draft.pdf') $$,
+  'P0001', 'not_allowed', 'register_file treats an item in a draft as not found');
+select throws_ok($$ select public.remove_file('e0000000-0000-0000-0000-0000000000a9') $$,
+  'P0001', 'not_allowed', 'remove_file treats a file in a draft as not found');
+reset role;
+update public.requests set status = 'archived' where id = 'd0000000-0000-0000-0000-0000000000a1';
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ select public.register_file('10000000-0000-0000-0000-0000000000a1',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/seed-a1.pdf', 'x.pdf') $$,
+  'P0001', 'invalid_state', 'register_file refuses an archived request');
+select throws_ok($$ select public.remove_file('e0000000-0000-0000-0000-0000000000a1') $$,
+  'P0001', 'invalid_state', 'remove_file refuses an archived request');
+
+-- Only drafts can be deleted.
+select tests.login_as('00000000-0000-0000-0000-0000000000a1');
+select is_empty($$ delete from public.requests where id = 'd0000000-0000-0000-0000-0000000000a2' returning 1 $$,
+  'staff cannot delete a sent request');
+
+-- Catalog-wide guards, so a new function or policy cannot quietly open a hole.
+reset role;
+select is_empty($$
+  select p.oid::regprocedure::text
+  from pg_proc p
+  where p.pronamespace = 'public'::regnamespace
+    and p.prosecdef
+    and (not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')
+         or has_function_privilege('anon', p.oid, 'execute')) $$,
+  'security definer functions pin search_path and are closed to anon');
+select is_empty($$ select tablename || '.' || policyname from pg_policies
+  where schemaname = 'public' and roles <> '{authenticated}' $$,
+  'every policy applies to signed-in users only');
+
+-- A user who is staff of firm A and a contact of client B1.
+insert into public.client_contacts (client_id, firm_id, user_id, full_name, email) values
+  ('c0000000-0000-0000-0000-0000000000b1', 'f0000000-0000-0000-0000-00000000000b',
+   '00000000-0000-0000-0000-0000000000a2', 'Staff A', 'staff-a@test.local');
+insert into public.requests (id, firm_id, client_id, title, due_date, status) values
+  ('d0000000-0000-0000-0000-0000000000b9', 'f0000000-0000-0000-0000-00000000000b',
+   'c0000000-0000-0000-0000-0000000000b1', 'B1 draft', current_date + 7, 'draft');
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+select results_eq($$ select id from public.requests order by id $$,
+  $$ values ('d0000000-0000-0000-0000-0000000000a1'::uuid), ('d0000000-0000-0000-0000-0000000000a2'::uuid),
+            ('d0000000-0000-0000-0000-0000000000a9'::uuid), ('d0000000-0000-0000-0000-0000000000b1'::uuid) $$,
+  'a user with both roles sees their firm''s requests and the other firm''s sent request only');
+select results_eq($$ select id from public.clients order by id $$,
+  $$ values ('c0000000-0000-0000-0000-0000000000a1'::uuid), ('c0000000-0000-0000-0000-0000000000a2'::uuid),
+            ('c0000000-0000-0000-0000-0000000000b1'::uuid) $$,
+  'and their firm''s clients plus the client they are a contact of');
+select is_empty($$ update public.requests set title = 'X'
+  where id = 'd0000000-0000-0000-0000-0000000000b1' returning 1 $$,
+  'but cannot change the other firm''s request');
+select is_empty($$ select 1 from public.firm_members where firm_id = 'f0000000-0000-0000-0000-00000000000b' $$,
+  'or read the other firm''s members');
+select throws_ok($$ insert into public.clients (firm_id, name) values ('f0000000-0000-0000-0000-00000000000b', 'X') $$,
+  '42501', null, 'or add clients to the other firm');
+
+-- anon reads nothing.
+reset role;
+set local role anon;
+select is_empty($$
+  select 1 from public.firms union all select 1 from public.firm_members
+  union all select 1 from public.clients union all select 1 from public.client_contacts
+  union all select 1 from public.templates union all select 1 from public.template_items
+  union all select 1 from public.requests union all select 1 from public.request_items
+  union all select 1 from public.item_files $$,
+  'anon reads no rows from any table');
+select is_empty($$ select 1 from storage.objects where bucket_id = 'documents' $$,
+  'anon reads no documents');
+select throws_ok($$ select 1 from public.notifications_sent $$,
+  '42501', null, 'anon cannot read notifications_sent');
+
+select * from finish();
+rollback;
+```
+
+- [ ] **Step 3: Run them to make sure the hardening test fails**
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: FAIL. `hardening_test.sql` reports `Looks like you failed 12 tests of 20` (`Failed tests:  1-3, 5-6, 9, 11-14, 16-17`; some fail only because an earlier unguarded update changed the fixture). `access_rules_test.sql` passes: it pins down rules that already hold.
+
+- [ ] **Step 4: Write the migration**
+
+Create `supabase/migrations/20260925000600_hardening.sql`. Notes:
+- It replaces `refresh_request_status` and `can_read_document` with `create or replace`, which keeps their grants.
+- The request lock cannot be shown in pgTAP, which runs each test in one transaction. With two concurrent sessions, both races above end in the wrong status without the lock and the right one with it.
+- The overwrite trigger compares `version`, which Storage changes on every upload, so metadata updates still work.
+- The trigger on `auth.users` blanks every password, including the random one Auth stores for code-only users. Nobody knows that one, so nothing that worked stops working.
+
+```sql
+-- Hardening: row locks for concurrent reviews and admin changes, overwrite
+-- and delete protection for uploaded files, fixed request and item identity,
+-- and code-only sign-in.
+
+-- Replaces the version from 20260925000300. The request row is locked first:
+-- two item changes on one request would otherwise each compute from a
+-- snapshot that misses the other and leave the wrong status (open with every
+-- required item accepted, or completed with one returned). Under READ
+-- COMMITTED the update below sees the other change once it has committed.
+create or replace function public.refresh_request_status(request_id uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform 1
+  from public.requests r
+  where r.id = refresh_request_status.request_id
+    and r.status in ('open', 'completed')
+  for no key update;
+
+  if not found then
+    return;
+  end if;
+
+  update public.requests r
+  set status = computed.status
+  from (
+    select case
+      when exists (
+        select 1 from public.request_items i
+        where i.request_id = refresh_request_status.request_id and i.required
+      )
+      and not exists (
+        select 1 from public.request_items i
+        where i.request_id = refresh_request_status.request_id
+          and i.required
+          and i.status <> 'accepted'
+      )
+      then 'completed'
+      else 'open'
+    end as status
+  ) computed
+  where r.id = refresh_request_status.request_id
+    and r.status <> computed.status;
+end;
+$$;
+
+-- Only drafts can be deleted, so a sent request never becomes a draft again.
+-- Contact access and file paths follow the request's client, and item status
+-- follows its request, so neither link ever changes.
+create function public.requests_guard_update()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.status = 'draft' and old.status <> 'draft' then
+    raise exception 'invalid_state';
+  end if;
+  if new.client_id <> old.client_id then
+    raise exception 'invalid_state';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger requests_guard_update
+  before update of status, client_id on public.requests
+  for each row execute function public.requests_guard_update();
+
+create function public.request_items_guard_update()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.request_id <> old.request_id then
+    raise exception 'invalid_state';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger request_items_guard_update
+  before update of request_id on public.request_items
+  for each row execute function public.request_items_guard_update();
+
+-- Every firm keeps an admin. RLS stops admins from changing their own row,
+-- but two admins demoting or removing each other at the same moment would
+-- each see the other still in place. Locking the firm row serializes them.
+-- A firm that is being deleted takes its members with it.
+create function public.firm_members_keep_admin()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.role = 'admin' and (tg_op = 'DELETE' or new.role <> 'admin') then
+    perform 1 from public.firms f where f.id = old.firm_id for no key update;
+    if found and not exists (
+      select 1
+      from public.firm_members m
+      where m.firm_id = old.firm_id
+        and m.role = 'admin'
+        and m.user_id <> old.user_id
+    ) then
+      raise exception 'invalid_state';
+    end if;
+  end if;
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$$;
+
+revoke execute on function public.firm_members_keep_admin() from public, anon, authenticated;
+
+create trigger firm_members_keep_admin
+  before update of role or delete on public.firm_members
+  for each row execute function public.firm_members_keep_admin();
+
+-- Replaces the version from 20260925000400: a contact's reads also require
+-- the firm segment to match the client's firm.
+create or replace function public.can_read_document(name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.firm_members m
+    where m.user_id = (select auth.uid())
+      and m.firm_id::text = split_part(can_read_document.name, '/', 1)
+  )
+  or exists (
+    select 1
+    from public.client_contacts cc
+    where cc.user_id = (select auth.uid())
+      and cc.firm_id::text = split_part(can_read_document.name, '/', 1)
+      and cc.client_id::text = split_part(can_read_document.name, '/', 2)
+  );
+$$;
+
+-- A contact may delete only an upload that is not registered as a file, so
+-- an item_files row never points at a missing object. remove_file deletes
+-- the row first, then the caller deletes the object.
+create function public.can_delete_document(name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select public.can_write_document(can_delete_document.name)
+    and not exists (
+      select 1
+      from public.item_files f
+      where f.storage_path = can_delete_document.name
+    );
+$$;
+
+revoke execute on function public.can_delete_document(text) from public, anon;
+
+drop policy "Contacts can delete from open file items" on storage.objects;
+
+create policy "Contacts can delete unregistered uploads from open file items"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'documents' and public.can_delete_document(name));
+
+-- Signed upload URLs are checked against the policies only when they are
+-- created, and the upload itself runs as the storage service, which upserts
+-- when the token allows it. So the missing update policy alone does not stop
+-- a contact from replacing a file after it was accepted. A new version of an
+-- existing document is an overwrite: refuse it. Metadata updates still work.
+create function public.documents_no_overwrite()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if old.bucket_id = 'documents' and new.version is distinct from old.version then
+    raise exception 'invalid_state';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger documents_no_overwrite
+  before update on storage.objects
+  for each row execute function public.documents_no_overwrite();
+
+-- Sign-in is by emailed code only. Auth still accepts password sign-ups, and
+-- a password someone set before the address's owner first signed in would
+-- keep working on the owner's account. Nothing in the app uses passwords, so
+-- none is ever stored. This relies on "Confirm email" being on, so that a
+-- password sign-up gets no session.
+create function public.auth_users_no_password()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.encrypted_password := '';
+  return new;
+end;
+$$;
+
+create trigger auth_users_no_password
+  before insert or update of encrypted_password on auth.users
+  for each row execute function public.auth_users_no_password();
+```
+
+- [ ] **Step 5: Apply it and run the whole suite**
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: all twelve files `ok`, `Files=12, Tests=173`, `Result: PASS`.
+
+- [ ] **Step 6: Turn on email confirmation**
+
+The password trigger stops a password from ever working, but with confirmations off, a password sign-up still gets a session for the address right away. Hosted projects have "Confirm email" on by default; turn it on locally too. In `supabase/config.toml`, under `[auth.email]`, replace:
+
+```toml
+# If enabled, users need to confirm their email address before signing in.
+enable_confirmations = false
+```
+
+with:
+
+```toml
+# If enabled, users need to confirm their email address before signing in.
+# On, as in hosted projects: otherwise a password sign-up gets a session for any address.
+enable_confirmations = true
+```
+
+Then restart the stack so Auth picks it up:
+
+Run: `npx supabase stop && npx supabase start`
+Expected: the same URLs and keys as before. New users now get the "Confirm signup" email, which shows the same code.
+
+- [ ] **Step 7: Lint and regenerate the types**
+
+Run: `npx supabase db lint --level warning && npm run db:types && npm run typecheck`
+Expected: `No schema errors found`; `lib/database.types.ts` gains `can_delete_document` under `Functions`; no type errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add supabase lib/database.types.ts
+git commit -m "feat(db): harden concurrent reviews, uploads, and sign-in"
+```

@@ -17,7 +17,7 @@ Run the phase plans in order. Each ends with the app building and every test wri
 | # | Plan | Builds | Ends with |
 |---|---|---|---|
 | 1 | [Foundation](2026-09-24-client-portal-1-foundation.md) | Next.js scaffold, shadcn/ui, pure libraries (dates, reminders, redirect paths, files, validation, errors, email) | 46 Vitest tests pass; build passes |
-| 2 | [Database](2026-09-24-client-portal-2-database.md) | Local Supabase; migrations for tables, RLS, completion trigger, storage, RPCs; generated types | 130 pgTAP tests pass |
+| 2 | [Database](2026-09-24-client-portal-2-database.md) | Local Supabase; migrations for tables, RLS, completion trigger, storage, RPCs, hardening; generated types | 173 pgTAP tests pass |
 | 3 | [Auth and staff shell](2026-09-24-client-portal-3-auth-and-shell.md) | Supabase clients, `proxy.ts`, code sign-in, onboarding, sign-out, staff layout, dashboard | End-to-end step 1 passes |
 | 4 | [Clients, templates, and team](2026-09-24-client-portal-4-clients-templates-team.md) | Clients, contacts, templates, firm settings, team | End-to-end steps 1–2 pass |
 | 5 | [Requests and review](2026-09-24-client-portal-5-requests-and-review.md) | Request editor, send, review Sheet, open-request edits, archive | End-to-end steps 1–3 pass |
@@ -27,7 +27,8 @@ Run the phase plans in order. Each ends with the app building and every test wri
 ## How this plan was checked
 
 All code in the phase plans was run in a scratch copy of this repository before it was written down:
-- `supabase test db`: 130 pgTAP tests pass, and each database task was replayed in order to confirm its tests fail before its migration and pass after.
+- `supabase test db`: 173 pgTAP tests pass, and each database task was replayed in order to confirm its tests fail before its migration and pass after.
+- The races and bypasses that Phase 2 Task 8 closes were reproduced against the local stack before its migration and shown fixed after it: both completion-trigger races and the admin race (two concurrent sessions), replacing an accepted file through a signed upload URL (the real Storage API), and signing in with a password pre-registered for someone else's address (the real Auth API).
 - `supabase db lint` finds no errors. `supabase db advisors` reports no security issues, only `multiple_permissive_policies` (see decision 1).
 - Vitest: 46 tests pass. `tsc`, ESLint, and `next build` with Cache Components all pass.
 - The Playwright test passes in full, and each per-phase version of it passes.
@@ -35,7 +36,7 @@ All code in the phase plans was run in a scratch copy of this repository before 
 - The cron was also driven by hand to send exactly one reminder, then none on the rerun.
 
 Not verified:
-- The real shadcn/ui components. `ui.shadcn.com` was blocked where the plan was checked, so API-compatible stand-ins built on the same Radix primitives were used for compiling and the browser runs. If a generated component's props differ, fix the call site.
+- The real shadcn/ui components. `ui.shadcn.com` was blocked where the plan was checked, so hand-written components matching shadcn's new-york v4 files (same names, exports, and props, on the same Radix primitives) were used for compiling and the browser runs. If a generated component's props differ, fix the call site.
 - Sending through Resend (the runs used log mode), Vercel Cron, and hosted Supabase settings.
 
 ## Before you start
@@ -72,6 +73,8 @@ These fill gaps in the spec or adjust it. Everything else follows the spec as wr
 11. **Resend batches** are sent in permissive mode, so one rejected address never drops the rest, and spaced 600 ms apart to stay under Resend's default 2 requests per second. Every email is built before the state change or cron claim it belongs to, so a configuration error changes nothing.
 12. **Dashboard order:** "Waiting on clients" by due date, oldest first; "Ready for review" by submission time, oldest first.
 13. **Uploads fall back to the file extension** for the MIME type when the browser reports none (common for HEIC and CSV), since the bucket rejects anything outside its allowed list.
+14. **Code-only sign-in is enforced, not just offered.** A trigger strips passwords from `auth.users`, and "Confirm email" stays on, so nobody can register someone else's address with a password and later reach the account a firm links to it.
+15. **Uploaded documents are immutable.** Signed upload URLs bypass the storage policies at upload time, so a trigger refuses a new version of an existing document. Contacts can delete only uploads that are not yet registered as files.
 
 ## Runtime dependencies
 
@@ -93,10 +96,10 @@ Dev only: `supabase` (CLI), `vitest`, `@playwright/test`, `@types/node@^22`.
 |---|---|
 | 3 Stack; the `APP_NAME` constant | Phase 1 Tasks 1–2, 6 |
 | 7.1–7.2 Data model | Phase 2 Task 2 |
-| 7.3 Status rules and editing rules | Phase 2 Task 4 (trigger); Phase 5 Task 1 (actions) |
+| 7.3 Status rules and editing rules | Phase 2 Tasks 4 and 8 (trigger, locks); Phase 5 Task 1 (actions) |
 | 8.1–8.2 Helpers and table policies | Phase 2 Task 3 |
 | 8.3 RPCs | Phase 2 Task 6 |
-| 8.4 Storage and downloads | Phase 2 Task 5; Phase 6 Task 3 |
+| 8.4 Storage and downloads | Phase 2 Tasks 5 and 8; Phase 6 Task 3 |
 | 9.1 Landing, login, onboarding, proxy | Phase 3 Tasks 1, 3 |
 | 9.2 Staff area | Phase 3 Task 4 (layout, dashboard); Phase 4 (clients, templates, settings); Phase 5 (requests) |
 | 9.3 Client area | Phase 6 |
@@ -108,7 +111,7 @@ Dev only: `supabase` (CLI), `vitest`, `@playwright/test`, `@types/node@^22`.
 | 10.8 Zip | Phase 7 Task 1 |
 | 11 Email and daily jobs | Phase 1 Task 7; Phase 7 Task 2 |
 | 12 Error handling | `lib/errors.ts` (Phase 1); `error.tsx` (Phases 3, 6) |
-| 13 Security | Phases 1–3; decisions 1–6 |
+| 13 Security | Phases 1–3; Phase 2 Task 8; decisions 1–6, 14, 15 |
 | 14 Testing | pgTAP (Phase 2), Vitest (Phase 1), Playwright (Phases 3–6) |
 | 15–16 Layout and configuration | All phases; README (Phase 7) |
 | 17 Starter template | Phase 2 Task 6 (`create_firm`) |
