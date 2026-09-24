@@ -425,7 +425,7 @@ Expected: FAIL, waiting for `getByRole('textbox', { name: 'Email' })`, because `
 **Files:**
 - Modify: `app/layout.tsx`, `app/page.tsx`
 - Delete: `public/file.svg`, `public/globe.svg`, `public/next.svg`, `public/vercel.svg`, `public/window.svg`
-- Create: `app/login/actions.ts`, `app/login/login-form.tsx`, `app/login/page.tsx`, `app/auth/sign-out/route.ts`, `app/onboarding/actions.ts`, `app/onboarding/onboarding-form.tsx`, `app/onboarding/page.tsx`
+- Create: `app/login/actions.ts`, `app/login/login-form.tsx`, `app/login/page.tsx`, `app/auth/sign-out/route.ts`, `lib/forms.ts`, `app/onboarding/actions.ts`, `app/onboarding/onboarding-form.tsx`, `app/onboarding/page.tsx`
 
 - [ ] **Step 1: Update the root layout**
 
@@ -693,6 +693,25 @@ export async function createFirm(_prev: ActionResult | null, formData: FormData)
 }
 ```
 
+Create `lib/forms.ts`. With `<form action={formAction}>`, React resets the form after every action, even one that failed, so a validation error would clear what the user typed. Forms submit through this handler instead, which dispatches the same action inside a transition without the reset.
+
+```ts
+import { startTransition, type FormEvent } from "react";
+
+/**
+ * An onSubmit handler that runs a `useActionState` action. Unlike
+ * `<form action>`, React does not reset the form afterwards, so what the
+ * user typed survives a server-side error.
+ */
+export function submitKeepingValues(dispatch: (formData: FormData) => void) {
+  return (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startTransition(() => dispatch(formData));
+  };
+}
+```
+
 Create `app/onboarding/onboarding-form.tsx`. Forms call their Server Action through `useActionState` and report the result with a Sonner toast.
 
 ```tsx
@@ -705,6 +724,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { createFirm } from "./actions";
 
 export function OnboardingForm() {
@@ -715,7 +735,7 @@ export function OnboardingForm() {
   }, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <Label htmlFor="firmName">Firm name</Label>
         <Input id="firmName" name="firmName" maxLength={LIMITS.firmName} required autoFocus />

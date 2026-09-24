@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24 21:10 UTC, after Phase 7 Task 2 (Phase 4–5 review fixes in progress)
+- **Last updated:** 2026-09-24, after the Phase 4–5 review fixes
 
 This report is updated and pushed after every phase, so it stays current if the session ends.
 
@@ -14,8 +14,8 @@ This report is updated and pushed after every phase, so it stays current if the 
 | 1 Foundation | Done | 46 Vitest tests pass; typecheck, lint, build pass. Review findings fixed. Task 2 used hand-written components (see Deviations). |
 | 2 Database | Done | 173 pgTAP tests pass; `db lint` clean. Security review found two Important issues and an account takeover; all fixed in Task 8, which was added to the plan. |
 | 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `e865b32`. |
-| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor; fixes being validated. |
-| 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor; fixes being validated. |
+| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d5477f7`. |
+| 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d5477f7`. pgTAP now 193. |
 | 6 Client portal and files | Done | The complete end-to-end test passes. Review stopped early at the usage limit; to be rerun. |
 | 7 Zip, daily jobs, deployment | In progress | Task 1 (zip) and Task 2 (cron: 401 without the secret, one reminder, nothing sent twice) done; Task 3 (README, final checks) waits for the review fixes. |
 
@@ -53,6 +53,7 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `a70f83f` | Plan updated for the Phase 3 review fixes |
 | `71b13b5` | Phase 7 Task 1: zip download |
 | `1be7bd5` | Phase 7 Task 2: daily reminders and staff digest cron |
+| `d5477f7` | Phase 4 and 5 review fixes |
 
 ## Deviations from the plan
 
@@ -78,6 +79,16 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **Shared email limit (Important, deployment).** Supabase Auth has one email-sending limit for the whole project, so sign-in codes for every firm share it. The README's deployment steps now say to raise it, and to consider CAPTCHA if sign-in emails are abused.
   - **Minor:** the proxy redirects only page loads, so a Server Action whose session expired no longer fails with "An unexpected response was received from the server"; sign-out is per device, clears the cookies itself when Auth is unreachable, and redirects with a relative URL; "Ready for review" leaves out archived requests; sidebar accessibility (`aria-current`, an `inert` collapsed sidebar, `aria-expanded` on the trigger).
   - **Not changed:** `ensureUser()` keeps a documented contract rather than taking the caller as a parameter, since passing a `Staff` object would not prove the admin role that adding staff needs. A full page load after sign-in (to drop pages kept mounted from an earlier session in the tab) was tried and reverted: it made the first clicks after sign-in race React hydration, and the case it guards against needs a session revoked from elsewhere, now that sign-out is per device and always a full page load.
+
+- **Phase 4** (code review with Server Actions called over HTTP and a headless browser). Authorization held everywhere, and refused calls created no auth users. Fixed:
+  - **Template save was not atomic (Important).** Rename, delete items, and insert items were separate requests: a failed insert left the template empty, and two overlapping saves merged their items (14 of 21 trials). Now one database function, `save_template`.
+  - **Minor:** a server-side error reset dialog forms (a failed "Add staff" snapped the role back to Staff); some actions did not revalidate, so Back showed stale lists; fixed ids collided across hidden pages; two actions reported success when nothing changed; ids and roles skipped validation; query errors showed as empty data.
+- **Phase 5** (code review with races forced by row locks). Guarded updates and emails were right. Fixed:
+  - **Draft save was not atomic (Important).** A stale "Save draft" could replace the checklist of a request sent a moment earlier (the client was emailed about 2 items and got 1), and a failed insert left empty drafts. Now `save_draft`, whose guarded update waits for a send in flight.
+  - **New request carried over (Important).** Next keeps the New request page mounted without its search params, so an unsaved request for one client appeared, and could be sent, for the next client. The editor is keyed by client.
+  - **Review actions on closed requests (Important).** Returning an item on an archived request emailed a client whose portal is read-only. Accept and Needs changes now require an open or completed request.
+  - **Minor:** removing an item could delete a file registered at the same moment (now `remove_item`, under the same row lock as `register_file`); "Edit details" kept a cancelled due date; dialogs and the review Sheet stayed open on hidden pages; a thrown save error discarded the editor's work; clicking the picked day cleared the due date.
+  - **Not changed:** unarchive is still two writes (reopen, then recompute); if the recompute fails, a complete request shows Open until its next item change, and it gets no reminders because it has no open items.
 
 ## Blockers
 

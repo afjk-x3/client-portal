@@ -31,8 +31,9 @@
 ## Task 1: Request actions
 
 **Files:**
-- Modify: `e2e/happy-path.spec.ts`
-- Create: `app/app/requests/actions.ts`
+- Modify: `e2e/happy-path.spec.ts`, `lib/database.types.ts` (generated)
+- Create: `supabase/migrations/20260925000800_request_editing.sql`, `app/app/requests/actions.ts`
+- Test: `supabase/tests/request_editing_test.sql`
 
 - [ ] **Step 1: Extend the end-to-end test**
 
@@ -100,14 +101,197 @@ test("a firm collects a document from a client", async ({ browser }) => {
 Run: `npm run test:e2e`
 Expected: FAIL at step 3, because `/app/requests/new` does not exist.
 
-- [ ] **Step 3: Add the actions**
+- [ ] **Step 3: Write the request editing test**
+
+Two edits must happen in one transaction. Saving a draft replaces its items: as separate requests, a stale editor could replace the checklist of a request sent a moment earlier, and a failure could leave an empty draft. Removing an item must see a file a contact registers at the same moment. Create `supabase/tests/request_editing_test.sql`:
+
+```sql
+-- save_draft creates a draft, or replaces a draft's fields and items, in one
+-- transaction. remove_item removes an untouched item from a sent request.
+begin;
+select plan(14);
+\ir fixtures/seed.psql
+
+create temp table new_draft (id uuid) on commit drop;
+grant all on new_draft to authenticated;
+
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+
+insert into new_draft
+select public.save_draft('c0000000-0000-0000-0000-0000000000a1', 'New draft', current_date + 14,
+  '[{"title": "W-2", "description": null, "kind": "file", "required": true}]');
+select results_eq(
+  $$ select r.status, r.title, r.created_by, (select count(*)::int from public.request_items i where i.request_id = r.id)
+     from public.requests r where r.id = (select id from new_draft) $$,
+  $$ values ('draft'::text, 'New draft'::text, '00000000-0000-0000-0000-0000000000a2'::uuid, 1) $$,
+  'a new draft is created with its items and creator');
+
+select lives_ok($$ select public.save_draft('c0000000-0000-0000-0000-0000000000a1', 'A1 draft v2', current_date + 21,
+  '[{"title": "One", "description": null, "kind": "file", "required": true},
+    {"title": "Two", "description": null, "kind": "text", "required": false}]',
+  'd0000000-0000-0000-0000-0000000000a9') $$,
+  'an existing draft can be saved');
+select results_eq($$ select position, title from public.request_items
+  where request_id = 'd0000000-0000-0000-0000-0000000000a9' order by position $$,
+  $$ values (1, 'One'::text), (2, 'Two'::text) $$,
+  'its items are replaced, in array order');
+select throws_ok($$ select public.save_draft('c0000000-0000-0000-0000-0000000000a1', 'Broken', current_date,
+  '[{"title": "", "description": null, "kind": "file", "required": true}]',
+  'd0000000-0000-0000-0000-0000000000a9') $$,
+  '23514', null, 'an invalid item fails the whole save');
+select is((select title from public.requests where id = 'd0000000-0000-0000-0000-0000000000a9'),
+  'A1 draft v2', 'and leaves the draft as it was');
+select throws_ok($$ select public.save_draft('c0000000-0000-0000-0000-0000000000a1', 'Late', current_date, '[]',
+  'd0000000-0000-0000-0000-0000000000a1') $$,
+  'P0001', 'invalid_state', 'a sent request cannot be saved as a draft');
+select throws_ok($$ select public.save_draft('c0000000-0000-0000-0000-0000000000b1', 'Other firm', current_date, '[]') $$,
+  'P0001', 'not_allowed', 'staff cannot create a draft for another firm''s client');
+
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ select public.save_draft('c0000000-0000-0000-0000-0000000000a1', 'Contact', current_date, '[]') $$,
+  'P0001', 'not_allowed', 'contacts cannot create drafts');
+select throws_ok($$ select public.remove_item('10000000-0000-0000-0000-0000000000a4') $$,
+  'P0001', 'not_allowed', 'contacts cannot remove items');
+
+-- remove_item, as staff. Item a1 has a file; a4 is requested with none.
+select tests.login_as('00000000-0000-0000-0000-0000000000b1');
+select throws_ok($$ select public.remove_item('10000000-0000-0000-0000-0000000000a4') $$,
+  'P0001', 'not_allowed', 'staff cannot remove another firm''s item');
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+select throws_ok($$ select public.remove_item('10000000-0000-0000-0000-0000000000a1') $$,
+  'P0001', 'invalid_state', 'an item with files cannot be removed');
+reset role;
+update public.request_items set status = 'submitted', text_answer = 'Yes'
+where id = '10000000-0000-0000-0000-0000000000a3';
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+select throws_ok($$ select public.remove_item('10000000-0000-0000-0000-0000000000a3') $$,
+  'P0001', 'invalid_state', 'a submitted item cannot be removed');
+select is(public.remove_item('10000000-0000-0000-0000-0000000000a4'),
+  'd0000000-0000-0000-0000-0000000000a1'::uuid, 'a requested item without files is removed; its request id is returned');
+select is_empty($$ select 1 from public.request_items where id = '10000000-0000-0000-0000-0000000000a4' $$,
+  'and the row is gone');
+
+select * from finish();
+rollback;
+```
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: FAIL: `request_editing_test.sql` reports `function public.save_draft(unknown, unknown, date, unknown) does not exist`.
+
+- [ ] **Step 4: Add the migration**
+
+Create `supabase/migrations/20260925000800_request_editing.sql`. Both functions run as the caller, so RLS applies. `save_draft` locks the request with its guarded update, so it waits for a `sendRequest` in flight and then fails with `invalid_state`. `remove_item` locks the item row that `register_file` also locks.
+
+```sql
+-- Request editing that must happen in one transaction.
+
+-- Creates a draft, or replaces a draft's title, due date, and items, in one
+-- transaction. The guarded update locks the request row and raises
+-- invalid_state once the request has been sent, so a stale editor or two
+-- saves at once never leave a mix of items. Security invoker: RLS applies to
+-- every statement.
+create function public.save_draft(
+  client_id uuid,
+  title text,
+  due_date date,
+  items jsonb,
+  request_id uuid default null
+)
+returns uuid
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_id uuid := save_draft.request_id;
+  v_firm_id uuid;
+begin
+  if v_id is null then
+    select c.firm_id into v_firm_id
+    from public.clients c
+    where c.id = save_draft.client_id
+      and public.is_firm_member(c.firm_id);
+    if not found then
+      raise exception 'not_allowed';
+    end if;
+
+    insert into public.requests (firm_id, client_id, title, due_date, created_by)
+    values (v_firm_id, save_draft.client_id, save_draft.title, save_draft.due_date, (select auth.uid()))
+    returning id into v_id;
+  else
+    update public.requests r
+    set title = save_draft.title, due_date = save_draft.due_date
+    where r.id = v_id
+      and r.status = 'draft'
+    returning r.firm_id into v_firm_id;
+    if not found then
+      raise exception 'invalid_state';
+    end if;
+
+    delete from public.request_items i where i.request_id = v_id;
+  end if;
+
+  insert into public.request_items (request_id, firm_id, position, title, description, kind, required)
+  select v_id, v_firm_id, e.position, e.item ->> 'title', e.item ->> 'description',
+         e.item ->> 'kind', (e.item ->> 'required')::boolean
+  from jsonb_array_elements(save_draft.items) with ordinality as e(item, position);
+
+  return v_id;
+end;
+$$;
+
+revoke execute on function public.save_draft(uuid, text, date, jsonb, uuid) from public, anon;
+
+-- Removes an item from a sent request. Allowed only while the item is
+-- `requested`, has no files, and the request is open or completed. Locking the
+-- item row first means a file that register_file is adding at the same moment
+-- (it locks the same row) is either seen here or waits for the delete.
+-- Security invoker: RLS applies. Returns the request id.
+create function public.remove_item(item_id uuid)
+returns uuid
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_request_id uuid;
+  v_status text;
+  v_request_status text;
+begin
+  select i.request_id, i.status, r.status
+  into v_request_id, v_status, v_request_status
+  from public.request_items i
+  join public.requests r on r.id = i.request_id
+  where i.id = remove_item.item_id
+  for update of i;
+
+  if not found then
+    raise exception 'not_allowed';
+  end if;
+  if v_request_status not in ('open', 'completed')
+     or v_status <> 'requested'
+     or exists (select 1 from public.item_files f where f.item_id = remove_item.item_id) then
+    raise exception 'invalid_state';
+  end if;
+
+  delete from public.request_items i where i.id = remove_item.item_id;
+  return v_request_id;
+end;
+$$;
+
+revoke execute on function public.remove_item(uuid) from public, anon;
+```
+
+Run: `npx supabase db reset && npm run test:db && npm run db:types`
+Expected: `Files=14, Tests=193`, `Result: PASS`; `lib/database.types.ts` gains `save_draft` and `remove_item`.
+
+- [ ] **Step 5: Add the actions**
 
 Create `app/app/requests/actions.ts`. Rules it enforces, from spec section 7.3:
-- `saveDraft` replaces a draft's title, due date, and items; the guarded update on `status = 'draft'` stops it from touching a sent request.
+- `saveDraft` calls `save_draft`, which replaces a draft's title, due date, and items in one transaction and refuses a sent request.
 - `sendRequest` needs at least one required item. Its guarded update (`draft` to `open`) makes a double click harmless. Reply-to is the sender.
 - `updateRequestDetails` and `addItem` work only on `open` or `completed` requests. A new required item reopens a completed request through the trigger.
-- `removeItem` works only while the item is `requested` and has no files.
-- `acceptItem` accepts from any state except `accepted`, which covers paper copies. `returnItem` needs a note and works from `submitted` or `accepted`; it emails every contact with reply-to set to the reviewer.
+- `removeItem` calls `remove_item`: only while the item is `requested` and has no files.
+- `acceptItem` accepts from any state except `accepted`, which covers paper copies. `returnItem` needs a note and works from `submitted` or `accepted`; it emails every contact with reply-to set to the reviewer. Both work only while the request is open or completed: a closed request's portal is read-only, so its contacts could not act on a note.
+- Ids from the browser go through `isId()`. A failed contacts or firm query stops `sendRequest` and `returnItem` before any change, instead of sending to nobody.
 - `sendRequest` and `returnItem` build their emails before the guarded update, so a configuration error (for example a missing `NEXT_PUBLIC_SITE_URL`) changes nothing.
 - `setRequestArchived(…, false)` reopens and then calls `refresh_request_status`.
 
@@ -124,79 +308,63 @@ import { sendEmails } from "@/lib/email/send";
 import { needsChangesEmail, requestSentEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
-import { draftSchema, itemSchema, requestDetailsSchema, reviewNoteSchema } from "@/lib/validation";
+import { draftSchema, isId, itemSchema, requestDetailsSchema, reviewNoteSchema } from "@/lib/validation";
 
-/** Creates a draft, or replaces a draft's fields and items. */
+/**
+ * Creates a draft, or replaces a draft's fields and items, in one transaction
+ * (`save_draft`). A sent request fails with `invalid_state` and is not touched.
+ */
 export async function saveDraft(input: z.input<typeof draftSchema>): Promise<ActionResult<{ id: string }>> {
-  const staff = await requireStaff();
+  await requireStaff();
   const parsed = draftSchema.safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
   const { requestId, clientId, title, dueDate, items } = parsed.data;
+
   const supabase = await createClient();
-
-  let id = requestId;
-  if (id) {
-    const { data, error } = await supabase
-      .from("requests")
-      .update({ title, due_date: dueDate })
-      .eq("id", id)
-      .eq("firm_id", staff.firmId)
-      .eq("status", "draft")
-      .select("id")
-      .maybeSingle();
-    if (error) return fail(error);
-    if (!data) return fail(staleState);
-    const { error: deleteError } = await supabase.from("request_items").delete().eq("request_id", id);
-    if (deleteError) return fail(deleteError);
-  } else {
-    const { data, error } = await supabase
-      .from("requests")
-      .insert({ firm_id: staff.firmId, client_id: clientId, title, due_date: dueDate, created_by: staff.userId })
-      .select("id")
-      .single();
-    if (error) return fail(error);
-    id = data.id;
-  }
-
-  if (items.length > 0) {
-    const requestIdForItems = id;
-    const { error } = await supabase.from("request_items").insert(
-      items.map((item, index) => ({
-        ...item,
-        request_id: requestIdForItems,
-        firm_id: staff.firmId,
-        position: index + 1,
-      })),
-    );
-    if (error) return fail(error);
-  }
+  const { data: id, error } = await supabase.rpc("save_draft", {
+    client_id: clientId,
+    title,
+    due_date: dueDate,
+    items,
+    request_id: requestId,
+  });
+  if (error) return fail(error);
 
   revalidatePath(`/app/requests/${id}`);
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true, data: { id } };
 }
 
+/** Accept and return work only while the request is open or completed. */
+function isReviewable(status: string | undefined) {
+  return status === "open" || status === "completed";
+}
+
 /** Section 10.4. The guarded update makes a double click harmless. */
 export async function sendRequest(requestId: string): Promise<ActionResult<{ contacts: number }>> {
   const staff = await requireStaff();
+  if (!isId(requestId)) return fail(notFound);
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error: requestError } = await supabase
     .from("requests")
     .select("id, title, due_date, client_id, request_items(required)")
     .eq("id", requestId)
     .eq("firm_id", staff.firmId)
     .maybeSingle();
+  if (requestError) return fail(requestError);
   if (!request) return fail(notFound);
   if (!request.request_items.some((item) => item.required)) {
     return { ok: false, error: "Add at least one required item before sending." };
   }
 
   // Build the emails before changing anything, so a configuration error leaves the draft as is.
-  const [{ data: contacts }, { data: firm }] = await Promise.all([
+  const [contacts, firm] = await Promise.all([
     supabase.from("client_contacts").select("email").eq("client_id", request.client_id),
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
   ]);
-  const firmName = firm?.name ?? "";
+  if (contacts.error) return fail(contacts.error);
+  if (firm.error) return fail(firm.error);
+  const firmName = firm.data.name;
   const content = requestSentEmail({
     firmName,
     title: request.title,
@@ -204,7 +372,7 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     itemCount: request.request_items.length,
     requestId,
   });
-  const messages = (contacts ?? []).map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+  const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
 
   const { data: sent, error } = await supabase
     .from("requests")
@@ -226,6 +394,7 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
 
 export async function deleteDraft(requestId: string): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(requestId)) return fail(notFound);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("requests")
@@ -248,6 +417,7 @@ export async function updateRequestDetails(
   formData: FormData,
 ): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(requestId)) return fail(notFound);
   const parsed = requestDetailsSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
@@ -270,6 +440,7 @@ export async function updateRequestDetails(
 /** Adds an item to a sent request. A required item reopens a completed request (trigger). */
 export async function addItem(requestId: string, _prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(requestId)) return fail(notFound);
   const parsed = itemSchema.safeParse({
     title: formData.get("title"),
     description: formData.get("description") ?? "",
@@ -279,12 +450,13 @@ export async function addItem(requestId: string, _prev: ActionResult | null, for
   if (!parsed.success) return invalid(parsed.error);
 
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error: requestError } = await supabase
     .from("requests")
     .select("status, request_items(position)")
     .eq("id", requestId)
     .eq("firm_id", staff.firmId)
     .maybeSingle();
+  if (requestError) return fail(requestError);
   if (!request) return fail(notFound);
   if (request.status !== "open" && request.status !== "completed") return fail(staleState);
   if (request.request_items.length >= MAX_ITEMS_PER_REQUEST) {
@@ -301,38 +473,37 @@ export async function addItem(requestId: string, _prev: ActionResult | null, for
   return { ok: true };
 }
 
-/** Allowed only while the item is `requested`, has no files, and the request is open or completed. */
+/**
+ * Allowed only while the item is `requested`, has no files, and the request is open or
+ * completed. `remove_item` checks and deletes under one row lock, so a file a contact is
+ * registering at the same moment is never deleted with the item.
+ */
 export async function removeItem(itemId: string): Promise<ActionResult> {
-  const staff = await requireStaff();
+  await requireStaff();
+  if (!isId(itemId)) return fail(notFound);
   const supabase = await createClient();
-  const { data: item } = await supabase
-    .from("request_items")
-    .select("request_id, status, requests(status), item_files(id)")
-    .eq("id", itemId)
-    .eq("firm_id", staff.firmId)
-    .maybeSingle();
-  if (!item) return fail(notFound);
-  const requestOpen = item.requests?.status === "open" || item.requests?.status === "completed";
-  if (!requestOpen || item.status !== "requested" || item.item_files.length > 0) return fail(staleState);
-
-  const { data, error } = await supabase
-    .from("request_items")
-    .delete()
-    .eq("id", itemId)
-    .eq("status", "requested")
-    .select("id")
-    .maybeSingle();
+  const { data: requestId, error } = await supabase.rpc("remove_item", { item_id: itemId });
   if (error) return fail(error);
-  if (!data) return fail(staleState);
 
-  revalidatePath(`/app/requests/${item.request_id}`);
+  revalidatePath(`/app/requests/${requestId}`);
   return { ok: true };
 }
 
 /** Staff may accept an item in any state except accepted (paper copies count). */
 export async function acceptItem(itemId: string): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(itemId)) return fail(notFound);
   const supabase = await createClient();
+  const { data: item, error: itemError } = await supabase
+    .from("request_items")
+    .select("requests(status)")
+    .eq("id", itemId)
+    .eq("firm_id", staff.firmId)
+    .maybeSingle();
+  if (itemError) return fail(itemError);
+  if (!item) return fail(notFound);
+  if (!isReviewable(item.requests?.status)) return fail(staleState);
+
   const { data, error } = await supabase
     .from("request_items")
     .update({
@@ -356,26 +527,32 @@ export async function acceptItem(itemId: string): Promise<ActionResult> {
 /** Returns a submitted or accepted item with a note, then emails the client's contacts. */
 export async function returnItem(itemId: string, _prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(itemId)) return fail(notFound);
   const note = reviewNoteSchema.safeParse(formData.get("note"));
   if (!note.success) return invalid(note.error);
 
   const supabase = await createClient();
-  const { data: item } = await supabase
+  const { data: item, error: itemError } = await supabase
     .from("request_items")
-    .select("title, request_id, requests(client_id)")
+    .select("title, request_id, requests(client_id, status)")
     .eq("id", itemId)
     .eq("firm_id", staff.firmId)
     .maybeSingle();
-  if (!item) return fail(notFound);
+  if (itemError) return fail(itemError);
+  if (!item?.requests) return fail(notFound);
+  // A closed request's portal is read-only, so its contacts could not act on the note.
+  if (!isReviewable(item.requests.status)) return fail(staleState);
 
   // Build the emails before changing anything, so a configuration error leaves the item as is.
-  const [{ data: contacts }, { data: firm }] = await Promise.all([
-    supabase.from("client_contacts").select("email").eq("client_id", item.requests?.client_id ?? ""),
+  const [contacts, firm] = await Promise.all([
+    supabase.from("client_contacts").select("email").eq("client_id", item.requests.client_id),
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
   ]);
-  const firmName = firm?.name ?? "";
+  if (contacts.error) return fail(contacts.error);
+  if (firm.error) return fail(firm.error);
+  const firmName = firm.data.name;
   const content = needsChangesEmail({ firmName, itemTitle: item.title, note: note.data, requestId: item.request_id });
-  const messages = (contacts ?? []).map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+  const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
 
   const { data: returned, error } = await supabase
     .from("request_items")
@@ -402,6 +579,7 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
 /** Archive stops reminders. Unarchive reopens, then recomputes the status. */
 export async function setRequestArchived(requestId: string, archived: boolean): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(requestId) || typeof archived !== "boolean") return fail(notFound);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("requests")
@@ -424,7 +602,7 @@ export async function setRequestArchived(requestId: string, archived: boolean): 
 }
 ```
 
-- [ ] **Step 4: Verify**
+- [ ] **Step 6: Verify**
 
 Run: `npm run typecheck`
 Expected: no errors.
@@ -438,12 +616,12 @@ Expected: no errors.
 
 - [ ] **Step 1: Add the date picker**
 
-Create `components/date-picker.tsx`. It converts with `toDateString()` and `fromDateString()` from `lib/dates.ts`, which use the local calendar day, so the picked date is the date that gets saved in any time zone. With `name`, it also submits the value through a hidden input.
+Create `components/date-picker.tsx`. It converts with `toDateString()` and `fromDateString()` from `lib/dates.ts`, which use the local calendar day, so the picked date is the date that gets saved in any time zone. With `name`, it also submits the value through a hidden input. The calendar is `required`, so clicking the picked day again does not clear it.
 
 ```tsx
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { CalendarIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -463,6 +641,8 @@ export function DatePicker({
   onChange: (value: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
 
   return (
     <>
@@ -476,6 +656,7 @@ export function DatePicker({
         <PopoverContent className="w-auto p-0" align="start">
           <Calendar
             mode="single"
+            required
             selected={value ? fromDateString(value) : undefined}
             onSelect={(date) => {
               onChange(date ? toDateString(date) : null);
@@ -497,6 +678,7 @@ Create `app/app/requests/request-editor.tsx`. Notes:
 - "Send" saves first, then sends.
 - Field ids come from `useId()`, because a new-request page and several draft pages can be mounted (hidden) at the same time.
 - Next keeps the "New request" page mounted after you leave it. After creating a request, the editor clears its state and navigates in the same transition, so the next visit starts blank and the old form never flashes empty.
+- An unexpected error while saving shows a toast and keeps the unsaved work on screen.
 
 ```tsx
 "use client";
@@ -560,30 +742,36 @@ export function RequestEditor({
 
   function save(send: boolean) {
     startTransition(async () => {
-      const saved = await saveDraft({ requestId, clientId, title, dueDate: dueDate ?? "", items: toItemInputs(items) });
-      if (!saved.ok) {
-        toast.error(saved.error);
-        return;
-      }
-      const savedId = saved.data!.id;
-      if (send) {
-        const sent = await sendRequest(savedId);
-        if (!sent.ok) toast.error(sent.error);
-        else if (sent.data?.contacts) toast.success("Request sent.");
-        else toast.warning("Request sent, but this client has no contacts yet. Add one so they can sign in.");
-      } else {
-        toast.success("Draft saved.");
-      }
-      if (!requestId) {
-        // Next keeps this page mounted (hidden) after navigating, so clear the form
-        // for the next visit. One transition, so the old form stays until the new page shows.
-        startTransition(() => {
-          setTemplateId("blank");
-          setTitle("");
-          setDueDate(null);
-          setItems([]);
-          router.push(`/app/requests/${savedId}`);
-        });
+      try {
+        const saved = await saveDraft({ requestId, clientId, title, dueDate: dueDate ?? "", items: toItemInputs(items) });
+        if (!saved.ok) {
+          toast.error(saved.error);
+          return;
+        }
+        const savedId = saved.data!.id;
+        if (send) {
+          const sent = await sendRequest(savedId);
+          if (!sent.ok) toast.error(sent.error);
+          else if (sent.data?.contacts) toast.success("Request sent.");
+          else toast.warning("Request sent, but this client has no contacts yet. Add one so they can sign in.");
+        } else {
+          toast.success("Draft saved.");
+        }
+        if (!requestId) {
+          // Next keeps this page mounted (hidden) after navigating, so clear the form
+          // for the next visit. One transition, so the old form stays until the new page shows.
+          startTransition(() => {
+            setTemplateId("blank");
+            setTitle("");
+            setDueDate(null);
+            setItems([]);
+            router.push(`/app/requests/${savedId}`);
+          });
+        }
+      } catch (error) {
+        // Keep the unsaved work on screen rather than replacing the page with the error boundary.
+        console.error(error);
+        toast.error("Something went wrong. Check your connection and try again.");
       }
     });
   }
@@ -665,7 +853,7 @@ function DeleteDraftButton({ requestId }: { requestId: string }) {
 
 - [ ] **Step 3: Add the new request page**
 
-Create `app/app/requests/new/page.tsx`. Template items are copied into the editor. Saving creates `request_items` rows, so later template edits never change this request (spec section 7.2).
+Create `app/app/requests/new/page.tsx`. Template items are copied into the editor. Saving creates `request_items` rows, so later template edits never change this request (spec section 7.2). The editor is keyed by client: Next keeps this page mounted without its search params, so an unsaved request for one client must not carry over to the next client's New request.
 
 ```tsx
 import { Suspense } from "react";
@@ -674,6 +862,7 @@ import { notFound } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { RequestEditor } from "../request-editor";
 
 export default function NewRequestPage({ searchParams }: PageProps<"/app/requests/new">) {
@@ -686,11 +875,11 @@ export default function NewRequestPage({ searchParams }: PageProps<"/app/request
 
 async function NewRequest({ searchParams }: Pick<PageProps<"/app/requests/new">, "searchParams">) {
   const { client: clientId } = await searchParams;
-  if (typeof clientId !== "string") notFound();
+  if (!isId(clientId)) notFound();
 
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [{ data: client }, { data: templates }] = await Promise.all([
+  const [clientResult, templates] = await Promise.all([
     supabase.from("clients").select("id, name").eq("id", clientId).eq("firm_id", staff.firmId).maybeSingle(),
     supabase
       .from("templates")
@@ -700,6 +889,9 @@ async function NewRequest({ searchParams }: Pick<PageProps<"/app/requests/new">,
       .order("position", { referencedTable: "template_items" })
       .order("id", { referencedTable: "template_items" }),
   ]);
+  if (clientResult.error) throw clientResult.error;
+  if (templates.error) throw templates.error;
+  const client = clientResult.data;
   if (!client) notFound();
 
   return (
@@ -713,10 +905,13 @@ async function NewRequest({ searchParams }: Pick<PageProps<"/app/requests/new">,
           </Link>
         </p>
       </div>
+      {/* Keyed by client: Next keeps this page mounted without its search params, so an
+          unsaved request for one client must not carry over to another. */}
       <RequestEditor
+        key={client.id}
         clientId={client.id}
         initial={{ title: "", dueDate: null, items: [] }}
-        templates={(templates ?? []).map((t) => ({ id: t.id, name: t.name, items: t.template_items }))}
+        templates={templates.data.map((t) => ({ id: t.id, name: t.name, items: t.template_items }))}
       />
     </>
   );
@@ -737,12 +932,12 @@ Expected: still FAIL, but later: after "Send" the URL is `/app/requests/<uuid>`,
 
 - [ ] **Step 1: Add the header actions**
 
-Create `app/app/requests/[id]/request-actions.tsx`. "Download all (.zip)" links to the route that Phase 7 adds.
+Create `app/app/requests/[id]/request-actions.tsx`. "Download all (.zip)" links to the route that Phase 7 adds. Its dialogs close when Next hides the page, and "Edit details" starts from the saved due date each time it opens.
 
 ```tsx
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
@@ -763,6 +958,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addItem, setRequestArchived, updateRequestDetails } from "../actions";
 
 /** Header actions for a sent request. */
@@ -802,6 +998,8 @@ export function RequestActions({
 
 function useDialogAction(action: (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>, success: string) {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open dialog.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await action(prev, formData);
     if (result.ok) {
@@ -821,9 +1019,17 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
     "Request updated.",
   );
   const [date, setDate] = useState<string | null>(dueDate);
+  const id = useId();
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Start from the saved date each time, not one picked and then cancelled.
+        if (next) setDate(dueDate);
+        setOpen(next);
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline">Edit details</Button>
       </DialogTrigger>
@@ -831,14 +1037,14 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
         <DialogHeader>
           <DialogTitle>Edit request</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="request-title">Title</Label>
-            <Input id="request-title" name="title" defaultValue={title} maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-title`}>Title</Label>
+            <Input id={`${id}-title`} name="title" defaultValue={title} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="request-due">Due date</Label>
-            <DatePicker id="request-due" name="dueDate" value={date} onChange={setDate} />
+            <Label htmlFor={`${id}-due`}>Due date</Label>
+            <DatePicker id={`${id}-due`} name="dueDate" value={date} onChange={setDate} />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>
@@ -853,6 +1059,7 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
 
 function AddItemDialog({ requestId }: { requestId: string }) {
   const { open, setOpen, formAction, pending } = useDialogAction(addItem.bind(null, requestId), "Item added.");
+  const id = useId();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -866,14 +1073,14 @@ function AddItemDialog({ requestId }: { requestId: string }) {
         <DialogHeader>
           <DialogTitle>Add item</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="item-title">Title</Label>
-            <Input id="item-title" name="title" maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-title`}>Title</Label>
+            <Input id={`${id}-title`} name="title" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="item-description">Details (optional)</Label>
-            <Textarea id="item-description" name="description" maxLength={LIMITS.description} rows={3} />
+            <Label htmlFor={`${id}-description`}>Details (optional)</Label>
+            <Textarea id={`${id}-description`} name="description" maxLength={LIMITS.description} rows={3} />
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <Select name="kind" defaultValue="file">
@@ -886,8 +1093,8 @@ function AddItemDialog({ requestId }: { requestId: string }) {
               </SelectContent>
             </Select>
             <div className="flex items-center gap-2">
-              <Checkbox id="item-required" name="required" defaultChecked />
-              <Label htmlFor="item-required">Required</Label>
+              <Checkbox id={`${id}-required`} name="required" defaultChecked />
+              <Label htmlFor={`${id}-required`}>Required</Label>
             </div>
           </div>
           <DialogFooter>
@@ -904,12 +1111,12 @@ function AddItemDialog({ requestId }: { requestId: string }) {
 
 - [ ] **Step 2: Add the review list and Sheet**
 
-Create `app/app/requests/[id]/review-items.tsx`. File links go through `/api/files/[id]` (Phase 6): "Open" in a new tab, "Download" with `?download=1`. "Remove item" appears only when section 7.3 allows it.
+Create `app/app/requests/[id]/review-items.tsx`. File links go through `/api/files/[id]` (Phase 6): "Open" in a new tab, "Download" with `?download=1`. "Accept", "Needs changes", and "Remove item" appear only when section 7.3 allows them, and the Sheet closes when Next hides the page.
 
 ```tsx
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
@@ -922,6 +1129,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/dates";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { acceptItem, removeItem, returnItem } from "../actions";
 
 export type ReviewItem = {
@@ -939,6 +1147,8 @@ export type ReviewItem = {
 
 export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open Sheet.
+  useLayoutEffect(() => () => setOpenId(null), []);
   const selected = items.find((item) => item.id === openId);
 
   return (
@@ -982,7 +1192,8 @@ export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable
 }
 
 function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable: boolean; onRemoved: () => void }) {
-  const canReturn = item.status === "submitted" || item.status === "accepted";
+  const canAccept = editable && item.status !== "accepted";
+  const canReturn = editable && (item.status === "submitted" || item.status === "accepted");
   const canRemove = editable && item.status === "requested" && item.files.length === 0;
 
   return (
@@ -1032,7 +1243,7 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
         </Alert>
       )}
       <div className="flex flex-col gap-4 border-t pt-4">
-        {item.status !== "accepted" && (
+        {canAccept && (
           <ActionButton action={() => acceptItem(item.id)} success="Item accepted.">
             Accept
           </ActionButton>
@@ -1057,6 +1268,7 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
 }
 
 function NeedsChangesForm({ itemId }: { itemId: string }) {
+  const id = useId();
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await returnItem(itemId, prev, formData);
     if (result.ok) toast.success("Returned to the client with your note.");
@@ -1065,9 +1277,9 @@ function NeedsChangesForm({ itemId }: { itemId: string }) {
   }, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-2">
-      <Label htmlFor="review-note">What needs to change?</Label>
-      <Textarea id="review-note" name="note" maxLength={LIMITS.reviewNote} rows={3} required />
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
+      <Label htmlFor={`${id}-note`}>What needs to change?</Label>
+      <Textarea id={`${id}-note`} name="note" maxLength={LIMITS.reviewNote} rows={3} required />
       <Button type="submit" variant="outline" disabled={pending}>
         Needs changes
       </Button>
@@ -1092,6 +1304,7 @@ import { requireStaff } from "@/lib/auth";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { RequestEditor } from "../request-editor";
 import { RequestActions } from "./request-actions";
 import { ReviewItems } from "./review-items";
@@ -1106,9 +1319,10 @@ export default function RequestPage({ params }: PageProps<"/app/requests/[id]">)
 
 async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error } = await supabase
     .from("requests")
     .select(
       `id, title, status, due_date, sent_at, client_id, clients(name),
@@ -1121,6 +1335,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (error) throw error;
   if (!request) notFound();
 
   const clientLink = (

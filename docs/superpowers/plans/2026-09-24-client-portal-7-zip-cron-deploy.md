@@ -456,7 +456,7 @@ npm run build
 npm run test:e2e
 ```
 
-Expected: pgTAP `Files=12, Tests=173, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
+Expected: pgTAP `Files=14, Tests=193, Result: PASS`; Vitest `Tests  46 passed (46)`; typecheck, lint, and build succeed; Playwright `1 passed`.
 
 Optionally run `npx supabase db advisors --local`. It reports only `multiple_permissive_policies` warnings: the staff and contact read rules are separate policies on purpose, one per actor, to match spec section 8.2.
 

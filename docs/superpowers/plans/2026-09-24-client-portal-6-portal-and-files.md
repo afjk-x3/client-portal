@@ -433,6 +433,7 @@ Create `app/portal/requests/[id]/item-card.tsx`. Notes:
 - Files upload one at a time through a promise queue; each shows "Waiting…", "Uploading…", or its error with a Retry button. A finished upload disappears from the queue and shows up in the file list after the page revalidates.
 - The item is editable only while the request is `open` and the item is `requested` or `needs_changes`.
 - The picker hides once the item holds 20 files, counting queued uploads, and extra files in one drop are refused with a toast.
+- The written answer submits through `submitKeepingValues()`, so an error keeps what the contact typed.
 
 ```tsx
 "use client";
@@ -448,6 +449,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, MAX_FILE_BYTES, uploadMimeType } from "@/lib/files";
+import { submitKeepingValues } from "@/lib/forms";
 import { createClient } from "@/lib/supabase/client";
 import { createUploadUrl, registerFile, removeFile, submitItem } from "./actions";
 
@@ -659,7 +661,7 @@ function TextItem({ item, editable }: { item: PortalItem; editable: boolean }) {
     return <p className="whitespace-pre-wrap text-sm">{item.textAnswer ?? "No answer."}</p>;
   }
   return (
-    <form action={formAction} className="flex flex-col gap-2">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
       <Textarea
         name="answer"
         aria-label={`Answer for ${item.title}`}
@@ -690,6 +692,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getContactClientIds } from "@/lib/auth";
 import { formatDate } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { progressPercent } from "../../progress";
 import { ItemCard } from "./item-card";
 
@@ -703,9 +706,10 @@ export default function PortalRequestPage({ params }: PageProps<"/portal/request
 
 async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const clientIds = await getContactClientIds();
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error } = await supabase
     .from("requests")
     .select(
       `id, title, status, due_date, clients(firms(name)),
@@ -719,6 +723,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (error) throw error;
   if (!request) notFound();
 
   const progress = progressPercent(request.request_items);

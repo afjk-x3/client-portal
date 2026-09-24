@@ -27,7 +27,7 @@ Run the phase plans in order. Each ends with the app building and every test wri
 ## How this plan was checked
 
 All code in the phase plans was run in a scratch copy of this repository before it was written down:
-- `supabase test db`: 173 pgTAP tests pass, and each database task was replayed in order to confirm its tests fail before its migration and pass after.
+- `supabase test db`: 193 pgTAP tests pass, and each database task was replayed in order to confirm its tests fail before its migration and pass after.
 - The races and bypasses that Phase 2 Task 8 closes were reproduced against the local stack before its migration and shown fixed after it: both completion-trigger races and the admin race (two concurrent sessions), replacing an accepted file through a signed upload URL (the real Storage API), and signing in with a password pre-registered for someone else's address (the real Auth API).
 - `supabase db lint` finds no errors. `supabase db advisors` reports no security issues, only `multiple_permissive_policies` (see decision 1).
 - Vitest: 46 tests pass. `tsc`, ESLint, and `next build` with Cache Components all pass.
@@ -49,11 +49,12 @@ Not verified:
 
 - **RLS decides access.** Staff pages still filter by the caller's `firm_id`, and portal pages by the caller's own `client_contacts` rows. RLS ORs the staff and contact policies, so a user who is both would otherwise see the other role's rows in the wrong place.
 - **Server Actions** live in each route segment's `actions.ts`. They validate with zod, use the user-scoped client, return `ActionResult` (`{ ok: true, data? }` or `{ ok: false, error }`), and revalidate the affected path. Guarded updates (`.eq("status", …)` plus `.select().maybeSingle()`) turn stale pages and double clicks into an `invalid_state` message.
-- **Forms** use `useActionState` and Sonner toasts. The two editors (request and template) send structured item lists, so they call their actions inside `useTransition`.
+- **Forms** use `useActionState` and Sonner toasts, and submit through `submitKeepingValues()` (`lib/forms.ts`), so a server-side error keeps what the user typed. The two editors (request and template) send structured item lists, so they call their actions inside `useTransition`.
+- **Ids from the browser** go through `isId()`; a malformed one reads as not found. **Query errors throw** to the error boundary; they never read as empty data or "not found".
 - **Session reads happen inside `<Suspense>`** (Cache Components). A record hidden by RLS renders `notFound()`.
 - **Typed queries:** pass `select()` one string literal. Template literals are fine; `"a" + "b"` loses the types.
 - **Client modules:** a function exported from a `'use client'` file cannot be called from a Server Component. Shared helpers go in `lib/`.
-- **Pages stay mounted.** Cache Components keeps visited pages in the DOM, hidden, with their state (React `<Activity>`). So: page-level forms take ids from `useId()`, the new-request form clears itself after saving, dialogs close before navigating, sign-out is a full page load, and Playwright tests use role locators.
+- **Pages stay mounted.** Cache Components keeps visited pages in the DOM, hidden, with their state (React `<Activity>`), keyed without search params. So: forms take ids from `useId()`, the new-request form clears itself after saving and is keyed by client, dialogs close before navigating and when their page is hidden, sign-out is a full page load, and Playwright tests use role locators.
 - **Ceilings** from spec section 18 are marked in code with `ponytail:` comments that name the upgrade path.
 
 ## Decisions made while planning
@@ -75,6 +76,7 @@ These fill gaps in the spec or adjust it. Everything else follows the spec as wr
 13. **Uploads fall back to the file extension** for the MIME type when the browser reports none (common for HEIC and CSV), since the bucket rejects anything outside its allowed list.
 14. **Code-only sign-in is enforced, not just offered.** A trigger strips passwords from `auth.users`, and "Confirm email" stays on, so nobody can register someone else's address with a password and later reach the account a firm links to it.
 15. **Uploaded documents are immutable.** Signed upload URLs bypass the storage policies at upload time, so a trigger refuses a new version of an existing document. Contacts can delete only uploads that are not yet registered as files.
+16. **Multi-step writes are database functions.** Saving a template or a draft replaces rows in several statements, and removing an item must see a file registered at the same moment, so `save_template`, `save_draft`, and `remove_item` run as one transaction under the caller's RLS.
 
 ## Runtime dependencies
 

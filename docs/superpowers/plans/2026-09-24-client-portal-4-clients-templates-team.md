@@ -96,11 +96,12 @@ Expected: FAIL, waiting for the `New client` button, because `/app/clients` does
 
 - [ ] **Step 3: Add the create action**
 
-Create `app/app/clients/actions.ts`. It returns the new id instead of redirecting, so the dialog can close before navigating. With Cache Components the list page stays mounted after you leave it, and a dialog left open would still be open when you come back.
+Create `app/app/clients/actions.ts`. It returns the new id instead of redirecting, so the dialog can close before navigating. With Cache Components the list page stays mounted after you leave it, and a dialog left open would still be open when you come back. It revalidates the list, so Back shows the new client.
 
 ```ts
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { fail, invalid, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
@@ -127,18 +128,19 @@ export async function addClient(
     .single();
   if (error) return fail(error);
 
+  revalidatePath("/app/clients");
   return { ok: true, data: { id: data.id } };
 }
 ```
 
 - [ ] **Step 4: Add the client dialog**
 
-Create `app/app/clients/client-form-dialog.tsx`. The owner select uses the value `"none"` for "No owner", because a Radix select item cannot have an empty value; `clientSchema` turns it into `null`.
+Create `app/app/clients/client-form-dialog.tsx`. The owner select uses the value `"none"` for "No owner", because a Radix select item cannot have an empty value; `clientSchema` turns it into `null`. Field ids come from `useId()`, because the New and Edit dialogs (and several client pages) can be mounted at once, and the dialog closes when Next hides its page.
 
 ```tsx
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, useId, useLayoutEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -155,6 +157,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 
 export type Member = { userId: string; fullName: string };
 
@@ -182,7 +185,10 @@ export function ClientFormDialog({
   openAfterSave?: boolean;
 }) {
   const router = useRouter();
+  const id = useId();
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: Result | null, formData: FormData) => {
     const result = await action(prev, formData);
     if (result.ok) {
@@ -202,15 +208,15 @@ export function ClientFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-name">Name</Label>
-            <Input id="client-name" name="name" defaultValue={initial?.name} maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-name`}>Name</Label>
+            <Input id={`${id}-name`} name="name" defaultValue={initial?.name} maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-kind">Type</Label>
+            <Label htmlFor={`${id}-kind`}>Type</Label>
             <Select name="kind" defaultValue={initial?.kind ?? "individual"}>
-              <SelectTrigger id="client-kind">
+              <SelectTrigger id={`${id}-kind`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -220,9 +226,9 @@ export function ClientFormDialog({
             </Select>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="client-owner">Owner</Label>
+            <Label htmlFor={`${id}-owner`}>Owner</Label>
             <Select name="ownerId" defaultValue={initial?.ownerId ?? "none"}>
-              <SelectTrigger id="client-owner">
+              <SelectTrigger id={`${id}-owner`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -465,7 +471,7 @@ export function ActionButton({
 
 - [ ] **Step 2: Add the client actions**
 
-Create `app/app/clients/[id]/actions.ts`. `addContact` follows spec section 10.3: it confirms the caller is staff and that the client belongs to their firm before `ensureUser()` creates any auth user, and it sends no email.
+Create `app/app/clients/[id]/actions.ts`. `addContact` follows spec section 10.3: it confirms the caller is staff and that the client belongs to their firm before `ensureUser()` creates any auth user, and it sends no email. Ids from the browser go through `isId()` (a malformed one reads as not found), and every write checks that a row changed.
 
 ```ts
 "use server";
@@ -475,7 +481,7 @@ import { requireStaff } from "@/lib/auth";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { clientSchema, contactSchema } from "@/lib/validation";
+import { clientSchema, contactSchema, isId } from "@/lib/validation";
 
 export async function updateClient(
   clientId: string,
@@ -483,6 +489,7 @@ export async function updateClient(
   formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const parsed = clientSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
@@ -503,13 +510,17 @@ export async function updateClient(
 
 export async function setClientArchived(clientId: string, archived: boolean): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("clients")
     .update({ archived_at: archived ? new Date().toISOString() : null })
     .eq("id", clientId)
-    .eq("firm_id", staff.firmId);
+    .eq("firm_id", staff.firmId)
+    .select("id")
+    .maybeSingle();
   if (error) return fail(error);
+  if (!data) return fail(notFound);
 
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true };
@@ -522,6 +533,7 @@ export async function addContact(
   formData: FormData,
 ): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId)) return fail(notFound);
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return invalid(parsed.error);
 
@@ -550,14 +562,18 @@ export async function addContact(
 
 export async function removeContact(clientId: string, userId: string): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(clientId) || !isId(userId)) return fail(notFound);
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("client_contacts")
     .delete()
     .eq("client_id", clientId)
     .eq("user_id", userId)
-    .eq("firm_id", staff.firmId);
+    .eq("firm_id", staff.firmId)
+    .select("user_id")
+    .maybeSingle();
   if (error) return fail(error);
+  if (!data) return fail(notFound);
 
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true };
@@ -571,7 +587,7 @@ Create `app/app/clients/[id]/contacts.tsx`:
 ```tsx
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -600,6 +616,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addContact, removeContact } from "./actions";
 
 type Contact = { userId: string; fullName: string; email: string };
@@ -635,7 +652,10 @@ export function Contacts({ clientId, contacts }: { clientId: string; contacts: C
 }
 
 function AddContactDialog({ clientId }: { clientId: string }) {
+  const id = useId();
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await addContact(clientId, prev, formData);
     if (result.ok) {
@@ -660,14 +680,14 @@ function AddContactDialog({ clientId }: { clientId: string }) {
           <DialogTitle>Add contact</DialogTitle>
           <DialogDescription>They sign in with a code sent to this email. Nothing is sent until you send a request.</DialogDescription>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="contact-name">Full name</Label>
-            <Input id="contact-name" name="fullName" maxLength={LIMITS.name} required />
+            <Label htmlFor={`${id}-name`}>Full name</Label>
+            <Input id={`${id}-name`} name="fullName" maxLength={LIMITS.name} required />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="contact-email">Email</Label>
-            <Input id="contact-email" name="email" type="email" required />
+            <Label htmlFor={`${id}-email`}>Email</Label>
+            <Input id={`${id}-email`} name="email" type="email" required />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>
@@ -711,7 +731,7 @@ function RemoveContactButton({ clientId, contact }: { clientId: string; contact:
 
 - [ ] **Step 4: Add the client page**
 
-Create `app/app/clients/[id]/page.tsx`. A client hidden by RLS, or in another firm, renders `notFound()`, never a 403. The "New request" link points at `/app/requests/new`, which Phase 5 adds.
+Create `app/app/clients/[id]/page.tsx`. A client hidden by RLS, or in another firm, renders `notFound()`, never a 403; a failed query throws to the error boundary. The "New request" link points at `/app/requests/new`, which Phase 5 adds.
 
 ```tsx
 import { Suspense } from "react";
@@ -727,6 +747,7 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { requireStaff } from "@/lib/auth";
 import { formatDate } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { ClientFormDialog } from "../client-form-dialog";
 import { setClientArchived, updateClient } from "./actions";
 import { Contacts } from "./contacts";
@@ -741,9 +762,10 @@ export default function ClientPage({ params }: PageProps<"/app/clients/[id]">) {
 
 async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [{ data: client }, contacts, requests, members] = await Promise.all([
+  const [clientResult, contacts, requests, members] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, kind, owner_id, archived_at")
@@ -764,9 +786,14 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
       .order("created_at", { ascending: false }),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId).order("full_name"),
   ]);
+  if (clientResult.error) throw clientResult.error;
+  if (contacts.error) throw contacts.error;
+  if (requests.error) throw requests.error;
+  if (members.error) throw members.error;
+  const client = clientResult.data;
   if (!client) notFound();
 
-  const memberList = (members.data ?? []).map((m) => ({ userId: m.user_id, fullName: m.full_name }));
+  const memberList = members.data.map((m) => ({ userId: m.user_id, fullName: m.full_name }));
   const owner = memberList.find((m) => m.userId === client.owner_id);
   const archived = client.archived_at !== null;
 
@@ -809,17 +836,17 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
 
       <Contacts
         clientId={id}
-        contacts={(contacts.data ?? []).map((c) => ({ userId: c.user_id, fullName: c.full_name, email: c.email }))}
+        contacts={contacts.data.map((c) => ({ userId: c.user_id, fullName: c.full_name, email: c.email }))}
       />
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">Requests</h2>
-        {(requests.data ?? []).length === 0 ? (
+        {requests.data.length === 0 ? (
           <p className="text-sm text-muted-foreground">No requests yet.</p>
         ) : (
           <Table>
             <TableBody>
-              {(requests.data ?? []).map((request) => (
+              {requests.data.map((request) => (
                 <TableRow key={request.id}>
                   <TableCell>
                     <Link className="font-medium underline-offset-4 hover:underline" href={`/app/requests/${request.id}`}>
@@ -863,7 +890,9 @@ git commit -m "feat: add clients, contacts, and client archive"
 ## Task 3: Templates
 
 **Files:**
-- Create: `lib/editor-items.ts`, `components/item-editor.tsx`, `app/app/templates/actions.ts`, `app/app/templates/page.tsx`, `app/app/templates/template-editor.tsx`, `app/app/templates/[id]/page.tsx`
+- Create: `lib/editor-items.ts`, `components/item-editor.tsx`, `supabase/migrations/20260925000700_save_template.sql`, `app/app/templates/actions.ts`, `app/app/templates/page.tsx`, `app/app/templates/template-editor.tsx`, `app/app/templates/[id]/page.tsx`
+- Test: `supabase/tests/save_template_test.sql`
+- Modify: `lib/database.types.ts` (generated)
 
 - [ ] **Step 1: Add the editor item helpers**
 
@@ -1023,9 +1052,92 @@ export function ItemEditor({ items, onChange }: { items: EditorItem[]; onChange:
 }
 ```
 
-- [ ] **Step 3: Add the template actions**
+- [ ] **Step 3: Write the `save_template` test**
 
-Create `app/app/templates/actions.ts`. Saving replaces the template's items. Requests keep their own copies (spec section 7.2), so editing a template never changes an existing request.
+Saving a template renames it and replaces its items. As separate requests, a failure after the delete would leave the template empty, and two saves at once could merge their items. So the save is one database function. Create `supabase/tests/save_template_test.sql`:
+
+```sql
+-- save_template replaces a template's name and items in one transaction.
+begin;
+select plan(6);
+\ir fixtures/seed.psql
+
+select tests.login_as('00000000-0000-0000-0000-0000000000a2');
+
+select lives_ok($$ select public.save_template('70000000-0000-0000-0000-00000000000a', 'Renamed',
+  '[{"title": "One", "description": null, "kind": "file", "required": true},
+    {"title": "Two", "description": "Details", "kind": "text", "required": false}]') $$,
+  'staff can save their firm''s template');
+select results_eq($$ select position, title, description, kind, required from public.template_items
+  where template_id = '70000000-0000-0000-0000-00000000000a' order by position $$,
+  $$ values (1, 'One'::text, null::text, 'file'::text, true), (2, 'Two'::text, 'Details'::text, 'text'::text, false) $$,
+  'the items are replaced, in array order');
+select throws_ok($$ select public.save_template('70000000-0000-0000-0000-00000000000a', 'Broken',
+  '[{"title": "Fine", "description": null, "kind": "file", "required": true},
+    {"title": "Bad", "description": null, "kind": "video", "required": true}]') $$,
+  '23514', null, 'an invalid item fails the whole save');
+select results_eq($$ select t.name, (select count(*)::int from public.template_items i where i.template_id = t.id)
+  from public.templates t where t.id = '70000000-0000-0000-0000-00000000000a' $$,
+  $$ values ('Renamed'::text, 2) $$,
+  'and leaves the name and items as they were');
+select throws_ok($$ select public.save_template('70000000-0000-0000-0000-00000000000b', 'Mine', '[]') $$,
+  'P0001', 'not_allowed', 'staff cannot save another firm''s template');
+
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ select public.save_template('70000000-0000-0000-0000-00000000000a', 'Mine', '[]') $$,
+  'P0001', 'not_allowed', 'contacts cannot save templates');
+
+select * from finish();
+rollback;
+```
+
+Run: `npx supabase db reset && npm run test:db`
+Expected: FAIL: `save_template_test.sql` reports `function public.save_template(unknown, unknown, unknown) does not exist`.
+
+- [ ] **Step 4: Add the migration**
+
+Create `supabase/migrations/20260925000700_save_template.sql`. It runs as the caller, so RLS applies to every statement; the update locks the template row, so a second save waits for the first.
+
+```sql
+-- Saves a template's name and items in one transaction. The update locks the
+-- template row, so two saves at once run one after the other instead of
+-- merging their items, and a failed insert leaves the template as it was.
+-- Security invoker: RLS applies to every statement.
+create function public.save_template(template_id uuid, name text, items jsonb)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_firm_id uuid;
+begin
+  update public.templates t
+  set name = save_template.name
+  where t.id = save_template.template_id
+  returning t.firm_id into v_firm_id;
+
+  if not found then
+    raise exception 'not_allowed';
+  end if;
+
+  delete from public.template_items i where i.template_id = save_template.template_id;
+
+  insert into public.template_items (template_id, firm_id, position, title, description, kind, required)
+  select save_template.template_id, v_firm_id, e.position, e.item ->> 'title', e.item ->> 'description',
+         e.item ->> 'kind', (e.item ->> 'required')::boolean
+  from jsonb_array_elements(save_template.items) with ordinality as e(item, position);
+end;
+$$;
+
+revoke execute on function public.save_template(uuid, text, jsonb) from public, anon;
+```
+
+Run: `npx supabase db reset && npm run test:db && npm run db:types`
+Expected: `Files=13, Tests=179`, `Result: PASS`; `lib/database.types.ts` gains `save_template`.
+
+- [ ] **Step 5: Add the template actions**
+
+Create `app/app/templates/actions.ts`. Requests keep their own copies of template items (spec section 7.2), so editing a template never changes an existing request. Creating and deleting revalidate the list, so Back never shows a stale one.
 
 ```ts
 "use server";
@@ -1036,7 +1148,7 @@ import type { z } from "zod";
 import { requireStaff } from "@/lib/auth";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
-import { templateSchema } from "@/lib/validation";
+import { isId, templateSchema } from "@/lib/validation";
 
 export async function createTemplate(): Promise<ActionResult> {
   const staff = await requireStaff();
@@ -1048,35 +1160,23 @@ export async function createTemplate(): Promise<ActionResult> {
     .single();
   if (error) return fail(error);
 
+  revalidatePath("/app/templates");
   redirect(`/app/templates/${data.id}`);
 }
 
-/** Replaces the template's name and items. Requests already created from it keep their copies. */
+/**
+ * Replaces the template's name and items in one transaction (`save_template`), so a
+ * failure changes nothing and two saves never merge. Requests keep their own copies.
+ */
 export async function saveTemplate(input: z.input<typeof templateSchema>): Promise<ActionResult> {
-  const staff = await requireStaff();
+  await requireStaff();
   const parsed = templateSchema.safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
   const { templateId, name, items } = parsed.data;
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("templates")
-    .update({ name })
-    .eq("id", templateId)
-    .eq("firm_id", staff.firmId)
-    .select("id")
-    .maybeSingle();
+  const { error } = await supabase.rpc("save_template", { template_id: templateId, name, items });
   if (error) return fail(error);
-  if (!data) return fail(notFound);
-
-  const { error: deleteError } = await supabase.from("template_items").delete().eq("template_id", templateId);
-  if (deleteError) return fail(deleteError);
-  if (items.length > 0) {
-    const { error: insertError } = await supabase.from("template_items").insert(
-      items.map((item, index) => ({ ...item, template_id: templateId, firm_id: staff.firmId, position: index + 1 })),
-    );
-    if (insertError) return fail(insertError);
-  }
 
   revalidatePath(`/app/templates/${templateId}`);
   revalidatePath("/app/templates");
@@ -1085,15 +1185,24 @@ export async function saveTemplate(input: z.input<typeof templateSchema>): Promi
 
 export async function deleteTemplate(templateId: string): Promise<ActionResult> {
   const staff = await requireStaff();
+  if (!isId(templateId)) return fail(notFound);
   const supabase = await createClient();
-  const { error } = await supabase.from("templates").delete().eq("id", templateId).eq("firm_id", staff.firmId);
+  const { data, error } = await supabase
+    .from("templates")
+    .delete()
+    .eq("id", templateId)
+    .eq("firm_id", staff.firmId)
+    .select("id")
+    .maybeSingle();
   if (error) return fail(error);
+  if (!data) return fail(notFound);
 
+  revalidatePath("/app/templates");
   redirect("/app/templates");
 }
 ```
 
-- [ ] **Step 4: Add the pages**
+- [ ] **Step 6: Add the pages**
 
 Create `app/app/templates/page.tsx`:
 
@@ -1247,7 +1356,7 @@ export function TemplateEditor({
 }
 ```
 
-Create `app/app/templates/[id]/page.tsx`. Items sort by `position`, then `id` (spec section 7.2).
+Create `app/app/templates/[id]/page.tsx`. Items sort by `position`, then `id` (spec section 7.2). A malformed id is a 404; a failed query throws to the error boundary instead of looking like "not found".
 
 ```tsx
 import { Suspense } from "react";
@@ -1256,6 +1365,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
 import { newEditorItem } from "@/lib/editor-items";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 import { TemplateEditor } from "../template-editor";
 
 export default function TemplatePage({ params }: PageProps<"/app/templates/[id]">) {
@@ -1271,9 +1381,10 @@ export default function TemplatePage({ params }: PageProps<"/app/templates/[id]"
 
 async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "params">) {
   const { id } = await params;
+  if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const { data: template } = await supabase
+  const { data: template, error } = await supabase
     .from("templates")
     .select("id, name, template_items(title, description, kind, required, position)")
     .eq("id", id)
@@ -1281,6 +1392,7 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
     .order("position", { referencedTable: "template_items" })
     .order("id", { referencedTable: "template_items" })
     .maybeSingle();
+  if (error) throw error;
   if (!template) notFound();
 
   return (
@@ -1292,7 +1404,7 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
 }
 ```
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 7: Verify**
 
 Run: `npm run typecheck && npm run lint`
 Expected: no errors.
@@ -1302,7 +1414,7 @@ Then check by hand. Run `npm run dev`, sign in as a staff user (codes arrive in 
 2. Click "Move item 2 up", then "Save template". Expected: toast "Template saved."; after a reload, item 1 is "Income statements from all employers".
 3. Back on `/app/templates`, click "New template". Expected: the "Edit template" page for "Untitled template". Click "Delete template", then "Delete". Expected: back on `/app/templates`, and the template is gone.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -1318,7 +1430,7 @@ git commit -m "feat: add template list and editor"
 
 - [ ] **Step 1: Add the settings actions**
 
-Create `app/app/settings/actions.ts`. `addStaff` follows spec section 10.2: confirm the caller is an admin, `ensureUser()`, insert the membership (RLS allows admins only), then send the `staff_added` email in `after()`. The email is built before anything changes, so a configuration error adds nobody. The unique `user_id` constraint produces "This person already belongs to a firm." `changeRole` and `removeStaff` exclude the caller's own row; RLS enforces the same rule.
+Create `app/app/settings/actions.ts`. `addStaff` follows spec section 10.2: confirm the caller is an admin, `ensureUser()`, insert the membership (RLS allows admins only), then send the `staff_added` email in `after()`. The email is built before anything changes, so a configuration error adds nobody. The unique `user_id` constraint produces "This person already belongs to a firm." `changeRole` and `removeStaff` exclude the caller's own row; RLS enforces the same rule. Their arguments are validated like form input.
 
 ```ts
 "use server";
@@ -1331,7 +1443,7 @@ import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { firmNameSchema, staffSchema } from "@/lib/validation";
+import { firmNameSchema, isId, roleSchema, staffSchema } from "@/lib/validation";
 
 export async function renameFirm(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireAdmin();
@@ -1360,8 +1472,9 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
 
   const supabase = await createClient();
   // Build the email before changing anything, so a configuration error adds nobody.
-  const { data: firm } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
-  const firmName = firm?.name ?? "";
+  const { data: firm, error: firmError } = await supabase.from("firms").select("name").eq("id", admin.firmId).single();
+  if (firmError) return fail(firmError);
+  const firmName = firm.name;
   const content = staffAddedEmail({ firmName, adminName: admin.fullName });
 
   const userId = await ensureUser(parsed.data.email);
@@ -1384,10 +1497,13 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
 
 export async function changeRole(userId: string, role: "admin" | "staff"): Promise<ActionResult> {
   const admin = await requireAdmin();
+  if (!isId(userId)) return fail(notFound);
+  const parsedRole = roleSchema.safeParse(role);
+  if (!parsedRole.success) return invalid(parsedRole.error);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("firm_members")
-    .update({ role })
+    .update({ role: parsedRole.data })
     .eq("firm_id", admin.firmId)
     .eq("user_id", userId)
     .neq("user_id", admin.userId)
@@ -1402,6 +1518,7 @@ export async function changeRole(userId: string, role: "admin" | "staff"): Promi
 
 export async function removeStaff(userId: string): Promise<ActionResult> {
   const admin = await requireAdmin();
+  if (!isId(userId)) return fail(notFound);
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("firm_members")
@@ -1433,6 +1550,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { renameFirm } from "./actions";
 
 export function FirmNameForm({ name, editable }: { name: string; editable: boolean }) {
@@ -1444,7 +1562,7 @@ export function FirmNameForm({ name, editable }: { name: string; editable: boole
   }, null);
 
   return (
-    <form action={formAction} className="flex max-w-md flex-col gap-2">
+    <form onSubmit={submitKeepingValues(formAction)} className="flex max-w-md flex-col gap-2">
       <Label htmlFor="firm-name">Firm name</Label>
       <div className="flex gap-2">
         <Input id="firm-name" name="name" defaultValue={name} maxLength={LIMITS.firmName} required disabled={!editable} />
@@ -1466,7 +1584,7 @@ Create `app/app/settings/team.tsx`. An admin's own row is read-only.
 ```tsx
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useLayoutEffect, useState, useTransition } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -1496,6 +1614,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
+import { submitKeepingValues } from "@/lib/forms";
 import { addStaff, changeRole, removeStaff } from "./actions";
 
 type Member = { userId: string; fullName: string; email: string; role: "admin" | "staff" };
@@ -1597,6 +1716,8 @@ function RemoveButton({ member }: { member: Member }) {
 
 function AddStaffDialog() {
   const [open, setOpen] = useState(false);
+  // Next keeps visited pages mounted but hidden; close so Back and Forward never return to it open.
+  useLayoutEffect(() => () => setOpen(false), []);
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await addStaff(prev, formData);
     if (result.ok) {
@@ -1621,7 +1742,7 @@ function AddStaffDialog() {
           <DialogTitle>Add staff</DialogTitle>
           <DialogDescription>Every staff member sees every client in the firm.</DialogDescription>
         </DialogHeader>
-        <form action={formAction} className="flex flex-col gap-4">
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="staff-name">Full name</Label>
             <Input id="staff-name" name="fullName" maxLength={LIMITS.name} required />
@@ -1680,19 +1801,21 @@ export default function SettingsPage() {
 async function Settings() {
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [{ data: firm }, { data: members }] = await Promise.all([
+  const [firm, members] = await Promise.all([
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
     supabase.from("firm_members").select("user_id, full_name, email, role").eq("firm_id", staff.firmId).order("full_name"),
   ]);
+  if (firm.error) throw firm.error;
+  if (members.error) throw members.error;
   const isAdmin = staff.role === "admin";
 
   return (
     <>
-      <FirmNameForm name={firm?.name ?? ""} editable={isAdmin} />
+      <FirmNameForm name={firm.data.name} editable={isAdmin} />
       <Team
         currentUserId={staff.userId}
         isAdmin={isAdmin}
-        members={(members ?? []).map((m) => ({
+        members={members.data.map((m) => ({
           userId: m.user_id,
           fullName: m.full_name,
           email: m.email,

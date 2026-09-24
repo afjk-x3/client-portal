@@ -713,6 +713,14 @@ export const reviewNoteSchema = text("Note", LIMITS.reviewNote);
 export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
 export const filenameSchema = text("File name", LIMITS.filename);
 export const dueDateSchema = z.iso.date("Pick a due date.");
+export const roleSchema = z.enum(["admin", "staff"]);
+
+const idSchema = z.uuid();
+
+/** True for a well-formed id. Actions and pages treat anything else as not found. */
+export function isId(value: unknown): value is string {
+  return idSchema.safeParse(value).success;
+}
 
 export const onboardingSchema = z.object({
   firmName: firmNameSchema,
@@ -734,7 +742,7 @@ export const contactSchema = z.object({
 export const staffSchema = z.object({
   fullName: personNameSchema,
   email: emailSchema,
-  role: z.enum(["admin", "staff"]),
+  role: roleSchema,
 });
 
 export const itemSchema = z.object({
