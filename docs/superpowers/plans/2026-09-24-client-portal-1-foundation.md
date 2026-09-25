@@ -487,6 +487,20 @@ describe("zipEntryNames", () => {
     expect(long).toBe(`01 Statements/${"s".repeat(96)}.pdf`);
     expect(dots).toBe("01 Statements/untitled");
   });
+
+  it("avoids names Windows cannot create", () => {
+    expect(
+      zipEntryNames([
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: "notes." },
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: "CON.pdf" },
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: `${"s".repeat(99)} tail` },
+      ]),
+    ).toEqual([
+      "07 Anything else we should know/notes",
+      "07 Anything else we should know/_CON.pdf",
+      `07 Anything else we should know/${"s".repeat(99)}`,
+    ]);
+  });
 });
 ```
 
@@ -568,10 +582,14 @@ export function storagePath(
   return `${ids.firmId}/${ids.clientId}/${ids.itemId}/${id}-${sanitizeFilename(filename)}`;
 }
 
+// Device names Windows reserves, alone or before an extension.
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
 function zipSafe(name: string): string {
-  const safe = truncate(name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim(), 100);
-  // Extractors skip "." and "..", which would silently drop the file.
-  return safe === "" || safe === "." || safe === ".." ? "untitled" : safe;
+  // Windows drops trailing dots and spaces, and extractors skip "." and "..".
+  const safe = truncate(name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim(), 100).replace(/[. ]+$/, "");
+  if (safe === "") return "untitled";
+  return WINDOWS_RESERVED.test(safe) ? `_${safe}` : safe;
 }
 
 /**
@@ -599,7 +617,7 @@ export function zipEntryNames(
 - [ ] **Step 4: Run the test to make sure it passes**
 
 Run: `npm test -- lib/files.test.ts`
-Expected: PASS, `Tests  14 passed (14)`.
+Expected: PASS, `Tests  15 passed (15)`.
 
 - [ ] **Step 5: Commit**
 
@@ -1052,7 +1070,7 @@ Expected: PASS, `Tests  7 passed (7)`.
 npm install resend server-only
 ```
 
-Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests), except in a Vercel production deployment, where a missing key is reported as a failure. With a key it sends batches of at most 100 through `resend.batch.send` in permissive mode, so one rejected address never drops the rest of the batch, and pauses between batches to stay under Resend's default rate limit. `EMAIL_FROM` may be a bare address or `Name <address>`. It never throws.
+Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests), except in a Vercel production deployment, where a missing key is reported as a failure. `emailConfigError()` gives that verdict up front, so the daily job (Phase 7) can stop before it claims anything. With a key it sends batches of at most 100 through `resend.batch.send` in permissive mode, so one rejected address never drops the rest of the batch. Calls are spaced 600 ms apart across the whole process, so concurrent callers also stay under Resend's default rate limit. `EMAIL_FROM` may be a bare address or `Name <address>`. It never throws.
 
 ```ts
 import "server-only";
@@ -1067,8 +1085,18 @@ export type EmailMessage = EmailContent & {
   replyTo?: string;
 };
 
-const BATCH_SIZE = 100; // Resend's per-call maximum
+export const EMAIL_BATCH_SIZE = 100; // Resend's per-call maximum
 const PAUSE_MS = 600; // stay under Resend's default 2 requests per second
+
+let nextCallAt = 0;
+
+/** Waits for this process's next Resend slot, so concurrent callers stay under the rate limit too. */
+async function waitForSlot() {
+  const now = Date.now();
+  const at = Math.max(now, nextCallAt);
+  nextCallAt = at + PAUSE_MS;
+  if (at > now) await new Promise((resolve) => setTimeout(resolve, at - now));
+}
 
 /** The sender address from EMAIL_FROM, given as "addr" or "Name <addr>". */
 function senderAddress(): string | null {
@@ -1083,37 +1111,41 @@ function fromHeader(fromName: string, address: string): string {
 }
 
 /**
- * Sends emails in batches. Failures are logged and counted, never thrown.
- * Without RESEND_API_KEY each email is logged instead (development, tests);
- * in a Vercel production deployment a missing key is an error, never log mode.
+ * Why emails cannot be sent, or null. Without RESEND_API_KEY emails are logged
+ * instead (development, tests), except in a Vercel production deployment.
  */
+export function emailConfigError(): string | null {
+  if (!process.env.RESEND_API_KEY) {
+    return process.env.VERCEL_ENV === "production" ? "RESEND_API_KEY is not set" : null;
+  }
+  return senderAddress() ? null : "EMAIL_FROM is not set";
+}
+
+/** Sends emails in batches. Failures are logged and counted, never thrown. */
 export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
   if (messages.length === 0) return { sent: 0, failed: 0 };
 
+  const configError = emailConfigError();
+  if (configError) {
+    console.error(`[email] ${configError}; ${messages.length} emails not sent`);
+    return { sent: 0, failed: messages.length };
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    if (process.env.VERCEL_ENV === "production") {
-      console.error(`[email] RESEND_API_KEY is not set; ${messages.length} emails not sent`);
-      return { sent: 0, failed: messages.length };
-    }
+  const address = senderAddress();
+  if (!apiKey || !address) {
     for (const m of messages) {
       console.log(`[email] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);
     }
     return { sent: messages.length, failed: 0 };
   }
 
-  const address = senderAddress();
-  if (!address) {
-    console.error(`[email] EMAIL_FROM is not set; ${messages.length} emails not sent`);
-    return { sent: 0, failed: messages.length };
-  }
-
   const resend = new Resend(apiKey);
   let sent = 0;
   let failed = 0;
-  for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-    if (i > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
-    const batch = messages.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
+    await waitForSlot();
+    const batch = messages.slice(i, i + EMAIL_BATCH_SIZE);
     try {
       // Permissive: Resend sends the valid messages even if one is rejected.
       const { data, error } = await resend.batch.send(
@@ -1145,7 +1177,7 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
 - [ ] **Step 6: Verify the whole phase**
 
 Run: `npm test && npm run typecheck && npm run lint && npm run build`
-Expected: `Test Files  4 passed (4)`, `Tests  46 passed (46)`; typecheck, lint, and build succeed.
+Expected: `Test Files  4 passed (4)`, `Tests  47 passed (47)`; typecheck, lint, and build succeed.
 
 - [ ] **Step 7: Commit**
 

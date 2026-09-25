@@ -30,7 +30,7 @@ All code in the phase plans was run in a scratch copy of this repository before 
 - `supabase test db`: 198 pgTAP tests pass, and each database task was replayed in order to confirm its tests fail before its migration and pass after.
 - The races and bypasses that Phase 2 Task 8 closes were reproduced against the local stack before its migration and shown fixed after it: both completion-trigger races and the admin race (two concurrent sessions), replacing an accepted file through a signed upload URL (the real Storage API), and signing in with a password pre-registered for someone else's address (the real Auth API).
 - `supabase db lint` finds no errors. `supabase db advisors` reports no security issues, only `multiple_permissive_policies` (see decision 1).
-- Vitest: 46 tests pass. `tsc`, ESLint, and `next build` with Cache Components all pass.
+- Vitest: 47 unit tests pass, and the daily job's 3 integration tests pass against the local stack. `tsc`, ESLint, and `next build` with Cache Components all pass.
 - The Playwright test passes in full, and each per-phase version of it passes.
 - A broader throwaway Playwright run covered what the one spec test does not: zip contents, signed download redirects, role redirects, signed-out redirects, cron auth and once-a-day claims, needs-changes, file removal, settings and team (including `ensureUser()`'s existing-email path), templates, drafts, open-request edits, archive, and sign-out.
 - The cron was also driven by hand to send exactly one reminder, then none on the rerun.
@@ -71,7 +71,7 @@ These fill gaps in the spec or adjust it. Everything else follows the spec as wr
 8. **Post-sign-in destination** comes from a small Server Action after `verifyOtp` in the browser. Running the OTP calls in the browser keeps Supabase's per-IP rate limits per person rather than per server.
 9. **File layout:** `safeNextPath` is in `lib/safe-next-path.ts` (Vitest cannot import `lib/auth.ts`, which is `server-only`), cron logic is in `lib/daily-jobs.ts` with a thin route, and editor item helpers are in `lib/editor-items.ts`.
 10. **Extra unit tests** beyond spec section 14: storage paths, MIME fallback, zip entry names, and email escaping. They are cheap and cover security-relevant behavior.
-11. **Resend batches** are sent in permissive mode, so one rejected address never drops the rest, and spaced 600 ms apart to stay under Resend's default 2 requests per second. Every email is built before the state change or cron claim it belongs to, so a configuration error changes nothing.
+11. **Resend batches** are sent in permissive mode, so one rejected address never drops the rest, and spaced 600 ms apart across the process to stay under Resend's default 2 requests per second. Every email is built before the state change or cron claim it belongs to, so a configuration error changes nothing.
 12. **Dashboard order:** "Waiting on clients" by due date, oldest first; "Ready for review" by submission time, oldest first.
 13. **Uploads fall back to the file extension** for the MIME type when the browser reports none (common for HEIC and CSV), since the bucket rejects anything outside its allowed list.
 14. **Code-only sign-in is enforced, not just offered.** A trigger strips passwords from `auth.users`, and "Confirm email" stays on, so nobody can register someone else's address with a password and later reach the account a firm links to it.
