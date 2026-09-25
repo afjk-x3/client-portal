@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-25. Final report: every phase, every review fix, the additions beyond the plan, and a final review of the later work are done.
+- **Last updated:** 2026-09-25. Every phase, every review fix, and the additions beyond the plan are done, including four features the user asked for afterwards. Those four still need an independent review (see Next steps).
 
 This report was updated and pushed after every phase, so it stayed current if the session ended.
 
@@ -11,10 +11,10 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
-  - pgTAP: 204 tests in 16 files (the plan's 198, plus 6 for leaving a firm).
-  - Vitest: 53 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - pgTAP: 250 tests in 20 files (the plan's 198, plus 6 for leaving a firm and 46 for the four new features).
+  - Vitest: 56 unit tests, plus 3 integration tests that run the daily job against local Supabase.
   - Typecheck, lint, and the production build pass.
-  - Playwright: 4 specs, the plan's happy path plus 3 broader suites.
+  - Playwright: 5 specs, the plan's happy path plus 4 broader suites.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
 - **CI on GitHub:** every run passed: [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906) for the workflow itself, and [run 3](https://github.com/afjk-x3/client-portal/actions/runs/36086359624) and [run 4](https://github.com/afjk-x3/client-portal/actions/runs/36086395404) for the Phase 7 fixes, the first with the integration test. The final push starts another run, which also checks that the generated types match the migrations.
 - **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, hosted Supabase settings, and the real shadcn/ui components (`ui.shadcn.com` stayed blocked; see Blockers).
@@ -26,58 +26,60 @@ This report was updated and pushed after every phase, so it stayed current if th
 |---|---|---|
 | 1 Foundation | Done | 46 Vitest tests pass; typecheck, lint, build pass. Review findings fixed. Task 2 used hand-written components (see Deviations). |
 | 2 Database | Done | 173 pgTAP tests pass; `db lint` clean. Security review found two Important issues and an account takeover; all fixed in Task 8, which was added to the plan. |
-| 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `e865b32`. |
-| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d5477f7`. |
-| 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d5477f7`. pgTAP now 193. |
-| 6 Client portal and files | Done | The complete end-to-end test passes. Review: four Important (upload queue froze, garbled download names, contacts could choose the saved extension, phone layout) and several Minor, fixed in `eb8372c`. pgTAP now 198. |
-| 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Checks at the time: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review: four Important (a failed read still used up the day's claims, emails went out only after every firm, reads stopped at 1,000 rows, the README missed Resend's free-plan cap) and several Minor, fixed in `2cfb4fa`. |
+| 3 Auth and staff shell | Done | End-to-end step 1 passes. Review: two Important issues and several Minor ones, fixed in `2308e55`. |
+| 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d3da5df`. |
+| 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d3da5df`. pgTAP now 193. |
+| 6 Client portal and files | Done | The complete end-to-end test passes. Review: four Important (upload queue froze, garbled download names, contacts could choose the saved extension, phone layout) and several Minor, fixed in `3a39488`. pgTAP now 198. |
+| 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Checks at the time: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review: four Important (a failed read still used up the day's claims, emails went out only after every firm, reads stopped at 1,000 rows, the README missed Resend's free-plan cap) and several Minor, fixed in `7e00847`. |
 
 ## Commits
 
 | Commit | Task |
 |---|---|
-| `71ea6c7` | Phase 1 Task 1: scaffold Next.js 16 with Cache Components |
-| `2b1a8fd` | Phase 1 Task 3: UTC dates and `reminderDue` |
-| `cbdde8e` | Phase 1 Task 4: `safeNextPath` |
-| `dcca377` | Phase 1 Task 5: file helpers |
-| `15a152a` | Phase 1 Task 6: constants, errors, validation |
-| `e4b6c0d` | Phase 1 Task 7: email templates and sender |
-| `f0b906d` | Phase 2 Task 1: local Supabase with code-only sign-in emails |
-| `4930222` | Phase 2 Task 2: tables, composite tenant keys, documents bucket |
-| `ab47656` | Phase 2 Task 3: RLS helpers and policies |
-| `980aa6b` | Phase 2 Task 4: request status trigger |
-| `f0d07c6` | Phase 2 Task 5: storage path helpers and policies |
-| `28573e4` | Phase 2 Task 6: RPCs |
-| `42aab82` | Phase 2 Task 7: generated database types |
-| `d935f5a` | Phase 1 review fixes |
-| `312ecf9` | Plan updated for the Phase 1 review fixes |
-| `57e5a86` | Phase 1 Task 2: UI components and TanStack Table |
-| `579f303` | Phase 3 Task 1: Supabase clients, auth helpers, proxy |
-| `43da241` | Plan: Phase 2 Task 8 added, mobile sidebar note |
-| `9ccede8` | Phase 2 Task 8: hardening |
-| `4eea6e0` | Phase 3 Tasks 2–3: Playwright, landing, code sign-in, sign-out, onboarding |
-| `66964c1` | Phase 3 Task 4: staff shell, sidebar, dashboard |
-| `903c8ce` | Phase 4 Tasks 1–2: clients, contacts, client archive |
-| `76cb18c` | Phase 4 Task 3: templates |
-| `b2c1a00` | Phase 4 Task 4: firm settings and team |
-| `317286c` | Phase 5 Tasks 1–3: request editor, sending, item review |
-| `9a16264` | Phase 6 Tasks 1–3: client portal, direct uploads, submit, downloads |
-| `e865b32` | Phase 3 review fixes |
-| `a70f83f` | Plan updated for the Phase 3 review fixes |
-| `71b13b5` | Phase 7 Task 1: zip download |
-| `1be7bd5` | Phase 7 Task 2: daily reminders and staff digest cron |
-| `d5477f7` | Phase 4 and 5 review fixes |
-| `cff0fb0` | Phase 7 Task 3: README (setup, testing, deployment) |
-| `eb8372c` | Phase 6 review fixes |
-| `3c7aac9` | Addition: staff can leave their firm |
-| `3e4a85f` | Addition: end-to-end suites for staff workflows, the portal, and editing safeguards |
-| `749c3c1` | Addition: CI workflow |
-| `f72f947` | Report: additions beyond the plan |
-| `2cfb4fa` | Phase 7 review fixes |
-| `e23c615` | Plan updated for the Phase 7 review fixes |
-| `31e6467` | Final execution report |
-| `9723a54` | Final review fixes |
-| `dbeb751` | Plan updated for the final review fixes |
+| `a5ea00a` | Phase 1 Task 1: scaffold Next.js 16 with Cache Components |
+| `a684f56` | Phase 1 Task 3: UTC dates and `reminderDue` |
+| `12e7fad` | Phase 1 Task 4: `safeNextPath` |
+| `eb373ec` | Phase 1 Task 5: file helpers |
+| `eac3dd3` | Phase 1 Task 6: constants, errors, validation |
+| `e8f2ce0` | Phase 1 Task 7: email templates and sender |
+| `157f5fb` | Phase 2 Task 1: local Supabase with code-only sign-in emails |
+| `d684660` | Phase 2 Task 2: tables, composite tenant keys, documents bucket |
+| `34a0bb6` | Phase 2 Task 3: RLS helpers and policies |
+| `495aa3f` | Phase 2 Task 4: request status trigger |
+| `176140e` | Phase 2 Task 5: storage path helpers and policies |
+| `76006ae` | Phase 2 Task 6: RPCs |
+| `7d2ca87` | Phase 2 Task 7: generated database types |
+| `4376b9a` | Phase 1 review fixes |
+| `77fe8b0` | Plan updated for the Phase 1 review fixes |
+| `4cc8956` | Phase 1 Task 2: UI components and TanStack Table |
+| `fe03706` | Phase 3 Task 1: Supabase clients, auth helpers, proxy |
+| `c33e951` | Plan: Phase 2 Task 8 added, mobile sidebar note |
+| `0b1102b` | Phase 2 Task 8: hardening |
+| `a779be4` | Phase 3 Tasks 2–3: Playwright, landing, code sign-in, sign-out, onboarding |
+| `a9c82ed` | Phase 3 Task 4: staff shell, sidebar, dashboard |
+| `97b8b11` | Phase 4 Tasks 1–2: clients, contacts, client archive |
+| `5135438` | Phase 4 Task 3: templates |
+| `6c61434` | Phase 4 Task 4: firm settings and team |
+| `19953a5` | Phase 5 Tasks 1–3: request editor, sending, item review |
+| `5ea318a` | Phase 6 Tasks 1–3: client portal, direct uploads, submit, downloads |
+| `2308e55` | Phase 3 review fixes |
+| `1f83ca7` | Plan updated for the Phase 3 review fixes |
+| `e630b22` | Phase 7 Task 1: zip download |
+| `1e53144` | Phase 7 Task 2: daily reminders and staff digest cron |
+| `d3da5df` | Phase 4 and 5 review fixes |
+| `d893af8` | Phase 7 Task 3: README (setup, testing, deployment) |
+| `3a39488` | Phase 6 review fixes |
+| `6b55a6d` | Addition: staff can leave their firm |
+| `f33ae14` | Addition: end-to-end suites for staff workflows, the portal, and editing safeguards |
+| `a7ba598` | Addition: CI workflow |
+| `268c881` | Report: additions beyond the plan |
+| `7e00847` | Phase 7 review fixes |
+| `53d13ae` | Plan updated for the Phase 7 review fixes |
+| `a046fbe` | Final execution report |
+| `468dceb` | Final review fixes |
+| `6180c52` | Plan updated for the final review fixes |
+| `353f296` | Report: final review |
+| `33dbe1e` | Four features: firm time zones, sending to many clients, reminders on demand, staff uploads |
 
 ## Deviations from the plan
 
@@ -89,7 +91,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Review findings
 
-- **Phase 1** (code review): one Important and several Minor issues, all fixed in `d935f5a`: Resend batches now use permissive validation so one bad address no longer drops the batch; email configuration errors are reported instead of producing broken headers; truncated file names keep their extension; zip entries never use `.` or `..`; `safeNextPath` resolves dot segments; MIME lookup uses own keys only; shared `LIMITS` for text lengths; `filenameSchema`. Later-phase code was fixed in the validated copy at the same time (emails built before state changes, a 20-file cap per item enforced before signing an upload URL).
+- **Phase 1** (code review): one Important and several Minor issues, all fixed in `4376b9a`: Resend batches now use permissive validation so one bad address no longer drops the batch; email configuration errors are reported instead of producing broken headers; truncated file names keep their extension; zip entries never use `.` or `..`; `safeNextPath` resolves dot segments; MIME lookup uses own keys only; shared `LIMITS` for text lengths; `filenameSchema`. Later-phase code was fixed in the validated copy at the same time (emails built before state changes, a 20-file cap per item enforced before signing an upload URL).
 - **Phase 2** (security review of the SQL, with live probes, mutation tests, and two-session race tests). Tenant and client isolation held in every probe. Fixed in Phase 2 Task 8, which was added to the plan:
   - **Completion race (Important).** Two reviews on one request could leave it open with every required item accepted, or completed with an item just returned, which stopped the client from resubmitting. The trigger now locks the request row first. Both races were reproduced without the lock and pass with it.
   - **Overwritable documents (Important).** A contact could create their own signed upload URL with `upsert: true` and replace a file after staff accepted it. Reproduced against the real Storage API; a trigger now refuses a new version of an existing document.
@@ -135,7 +137,7 @@ This report was updated and pushed after every phase, so it stayed current if th
     - The README gives the sign-in template subjects and the Playwright browser install.
   - **Test gap closed:** `npm run test:integration` runs the daily job against local Supabase with emails captured. It covers the reminder rules, digest windows across days (a missed day, a new member), paging past 1,000 rows, same-day reruns, and failures that must not use up claims. Run against the previous `lib/daily-jobs.ts`, all 3 tests fail. It was added to the plan (Phase 7 Task 2) and to CI.
 
-- **Final review** of everything committed after the phase reviews: the Phase 7 fixes, leaving a firm, the end-to-end suites, and CI. Verdict: ready, with no Critical or Important findings. It probed the job with a fake PostgREST, measured the pacing under concurrent callers, and confirmed from PostgREST's source that `max_rows` never limits writes. Fixed in `9723a54`:
+- **Final review** of everything committed after the phase reviews: the Phase 7 fixes, leaving a firm, the end-to-end suites, and CI. Verdict: ready, with no Critical or Important findings. It probed the job with a fake PostgREST, measured the pacing under concurrent callers, and confirmed from PostgREST's source that `max_rows` never limits writes. Fixed in `468dceb`:
   - **Offset paging could send a reminder twice or skip one.** When a request changed between two page reads of a firm with over 1,000 open requests, rows shifted between pages. Reads now start each page after the previous page's last row (keyset paging); digest items page by submission time and id, since many can share a timestamp.
   - **A digest after changing firms covered the whole gap.** The window started at the member's last claim at any firm. Only claims made since the member joined now count.
   - **The zip route read a failed lookup as "Not found".** It now throws; malformed ids are still a 404.
@@ -156,6 +158,13 @@ This report was updated and pushed after every phase, so it stayed current if th
 - **End-to-end suites.** The reviews found flows that only a browser covers. Besides the plan's happy path, `npm run test:e2e` now runs staff workflows (settings, team, leaving a firm, templates, drafts, open-request edits, archive, sign-out), the portal and review loop (uploads, review, zip, exact download names, access rules, users who are both staff and contacts, the cron), and editing safeguards (typed values survive errors; pages kept mounted stay correct). Playwright runs one worker, because the specs share a database and the cron checks count every firm.
 - **Continuous integration.** `.github/workflows/ci.yml` runs two jobs on every push and pull request: Vitest, typecheck, lint, and build; then local Supabase with the pgTAP suite and the Playwright suites against a production build (`next build && next start`, chosen in `playwright.config.ts` when `CI` is set). The production-build run was checked locally: 4 passed. Both runs on GitHub passed.
 
+- **Four features requested after the MVP** (2026-09-25), in one commit. The spec had listed two of them as out of scope for v1.
+  - **Firm time zones.** Each firm has a time zone, set at signup from the browser and changed by admins in Settings. The firm's "today" decides overdue badges, reminder days, and the daily job's claims, and staff see times in that zone ("9:30 AM EDT"). The daily job still runs once at 13:00 UTC, so firms get their emails at different local hours; a ceiling marker replaces the old UTC one. Migration `20260925001100_time_zones.sql`, 8 pgTAP tests, unit tests for the date helpers, and an integration case for a firm in Auckland.
+  - **Send reminder now.** A button on open requests with open items emails the open items to the client's contacts right away. It takes the same once-a-day claim as the daily reminder, keyed by the firm's date, so a request never gets two reminders in one day (`claim_reminder`, 9 pgTAP tests).
+  - **Send a template to many clients.** From a template, staff pick up to 100 active clients with contacts, a title, and a due date. One transaction creates and sends a request for each client, so a send reaches all of them or none; the emails are built first (`send_requests`, 12 pgTAP tests).
+  - **Staff upload files for a client**, for documents that arrive by email or on paper. Staff add files to file items of open requests that are not accepted yet, including submitted ones, and clients see them marked as added by the firm. Each side removes only its own files, enforced by the storage rules, `register_file`, and `remove_file` (`20260925001400_staff_uploads.sql`, 16 new pgTAP tests, 2 updated).
+  - A new browser spec covers all four. Every check listed under Final state passes on this commit.
+
 ## Blockers
 
 - **`ui.shadcn.com` is denied by the session's network policy** (proxy answers 403 to CONNECT; last checked 2026-09-25 02:21 UTC). Worked around with hand-written components (above). A new session may pick up the changed setting.
@@ -164,7 +173,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Notes from execution
 
-- Commit trailers: commits from Tasks 1, 3, and 4 carry `Co-Authored-By: Claude Opus 5.5`. From Task 5 on, subagents use their own environment's attribution (`Claude Sonnet 5`), which is the accurate author.
+- Authorship: at the user's request, every commit on `main` and on this branch is authored by the repository owner and carries no co-author or session lines. The history was rewritten on 2026-09-25 (file contents unchanged, all hashes changed), and the hashes in this report are the rewritten ones.
 - All copied files matched the validated versions byte for byte.
 - Some tasks end without a commit by design (Phase 3 Task 2, Phase 4 Task 1); the next task's commit includes their files.
 - Implementers skip the plan's "check by hand" steps. The same flows are covered by the broader browser suites; the settings, templates, drafts, and open-request suite already passes against this repository.
@@ -175,12 +184,13 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Next steps
 
-1. **Real shadcn/ui components.** Where `ui.shadcn.com` is reachable, run `npx shadcn@latest add <name> --overwrite` for each file in `components/ui/`. Then run the checks and fix any call site whose props differ.
-2. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
+1. **Review the four new features.** Run an independent review of the time zones, reminders on demand, bulk send, and staff uploads, with the same security focus as the phase reviews (storage rules, the new database functions, and caller-supplied ids), and fix what it finds.
+2. **Real shadcn/ui components.** Where `ui.shadcn.com` is reachable, run `npx shadcn@latest add <name> --overwrite` for each file in `components/ui/`. Then run the checks and fix any call site whose props differ.
+3. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
    - Sign-in codes arrive through Resend SMTP.
    - The cron runs at 13:00 UTC and its log shows the JSON summary.
    - A reminder and a digest arrive.
-3. **Before real customers:**
+4. **Before real customers:**
    - Review the ceilings marked `ponytail:` (spec section 18).
    - Move to paid plans (README).
-4. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check.
+5. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check.
