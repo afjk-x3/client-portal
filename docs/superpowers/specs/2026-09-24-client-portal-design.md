@@ -537,7 +537,7 @@ The route sets `maxDuration = 300`.
 
 ### 11.2 Daily cron
 
-- **Schedule:** `vercel.json` contains `{"crons":[{"path":"/api/cron/daily","schedule":"0 13 * * *"}]}`. On the Hobby plan the job runs once, at some point within that hour.
+- **Schedule:** `vercel.json` contains `{"crons":[{"path":"/api/cron/daily","schedule":"0 1 * * *"}]}`: 01:00 UTC, 9 am in UTC+8, where the first customers are. On the Hobby plan the job runs once, at some point within that hour.
 - **Authentication:** `GET /api/cron/daily` returns 401 unless the request has the header `Authorization: Bearer ${CRON_SECRET}`. The route sets `maxDuration = 300` and uses the service-role client.
 - **Date:** `today` is the current UTC date.
 
@@ -699,10 +699,12 @@ Each ceiling is marked in code with a `ponytail:` comment that names the upgrade
 
 | Ceiling | Upgrade path |
 |---|---|
-| Dates, due dates, and "overdue" use UTC. | Add `firms.timezone`. |
+| The daily job runs once, at 01:00 UTC (9 am in UTC+8), so firms in other time zones get their emails at other local hours. (Dates follow each firm's time zone since `firms.time_zone`.) | Run the job hourly (Vercel Pro) and send at a set local hour per firm. |
 | A staff user can belong to only one firm. | Drop the unique `user_id` constraint and add a firm switcher. |
 | An object is orphaned when an upload succeeds but `register_file` fails, or when a Storage delete fails after `remove_file`. | Add a nightly cleanup of objects that have no `item_files` row. |
 | Zip size is limited by the 300-second function duration. | Download files individually, or build zips in a background job. |
-| Scheduled emails are sent at most once: a failed send after a claim is not retried. | Move to an outbox with retries. |
+| A failed send is tried up to 3 times within the run; an email that still fails, or never starts because the run hits its 300-second limit, is lost after its claim. | An outbox that the next run sends again. |
 | Optional items lock when a request completes. | Allow optional submissions on completed requests. |
 | The MIME type is the declared type only, and files are not virus-scanned. | Add a scanning step before `register_file`. |
+| Either side can delete the other side's upload before it is registered. | An `owner_id` check in the delete policy, with `removeFile` deleting the object through the service role. |
+| Gmail over SMTP sends about 500 emails a day. | A domain verified in Resend, with `SMTP_HOST` removed. |

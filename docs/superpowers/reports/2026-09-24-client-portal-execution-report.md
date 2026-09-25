@@ -12,7 +12,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
   - pgTAP: 254 tests in 20 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, and 4 from their review).
-  - Vitest: 61 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - Vitest: 63 unit tests, plus 3 integration tests that run the daily job against local Supabase.
   - Typecheck, lint, and the production build pass.
   - Playwright: 5 specs, the plan's happy path plus 4 broader suites.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
@@ -183,6 +183,10 @@ This report was updated and pushed after every phase, so it stayed current if th
   - **App emails over SMTP.** With no budget for a domain, staging sends everything through one Gmail account. `lib/email/send.ts` uses SMTP whenever `SMTP_HOST` is set: one pooled `nodemailer` connection per call, TLS on 465 or STARTTLS on 587, and a refused message counted as failed without stopping the rest. Resend stays the path for a verified domain. Browser tests blank `SMTP_HOST` as well as `RESEND_API_KEY`. 4 new unit tests.
   - **Staging project.** `paperline-staging` in Tokyo (`ap-northeast-1`): all 15 migrations applied, the `documents` bucket, both guard triggers, and RLS on every public table checked. Advisors add warnings that signed-in users can call the security-definer helpers and RPCs, which is intended, and one for Supabase's own `rls_auto_enable` event-trigger function. Auth: 6-digit codes, "Confirm email" on, both templates, and custom SMTP through Gmail. A sign-up from the app against staging received its code and created a firm.
   - **This network's DNS** answers `::` for `public.ecr.aws` and `*.pooler.supabase.com`, and direct IPv6 is not routable. Local images come from `ghcr.io` (`SUPABASE_INTERNAL_IMAGE_REGISTRY`), and hosted database commands add `--dns-resolver https`.
+  - **Staging on Vercel** (`paperline-staging.vercel.app`, functions in `hnd1`). Checked by hand: sign-in codes arrive through Gmail; a client, a contact, a sent request, a reminder, portal uploads, and review all work; the scheduled run logged its JSON summary, and a manual run sent the digest. The reminder landed in the contact's Spam folder: a new Gmail sender linking to a `vercel.app` address. The fix is a domain for the site and the email, with the paid plans.
+  - **Ceiling review** (spec section 18, updated). Decided: the daily job moves to 01:00 UTC, 9 am in UTC+8 where the first customers are; failed sends are retried; `.doc` and `.xls` stay allowed. The rest stay as marked.
+  - **Retries.** `sendEmails` tries a failed send up to 3 times, 2 and 8 seconds apart, when another try can succeed: an SMTP 4xx reply or a dropped connection, or a Resend rate limit, server error, or network failure. SMTP 5xx replies, refused logins, and Resend validation errors fail at once. This covers the daily job and every email sent after an action. 2 new unit tests, 1 updated.
+  - **Paid plans, when there is budget** (verified 2026-09-25): Vercel Pro $20 a month per developer (Hobby is for non-commercial use), Supabase Pro $25 a month (100 GB files, daily backups, no pausing), a domain, and Resend (free for 3,000 emails a month, Pro $20 for 50,000).
 
 ## Blockers
 
@@ -203,11 +207,6 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Next steps
 
-1. **Staging deployment.** Supabase is done (above). Deploy to Vercel with the `SMTP_*` variables, set the Supabase Site URL to the Vercel domain, then check:
-   - Sign-in codes arrive through Gmail from the deployed app.
-   - The cron runs at 13:00 UTC and its log shows the JSON summary.
-   - A reminder and a digest arrive.
-2. **Before real customers:**
-   - Review the ceilings marked `ponytail:` (spec section 18).
-   - Move to paid plans (README).
+1. **Before real customers:** move to the paid plans above, then buy a domain and verify it in Resend (`RESEND_API_KEY` set, `SMTP_*` removed), and point the site at it. Add a privacy policy and terms.
+2. **Backlog:** activity timeline per request, CSV import of clients and contacts, search and filters, drag-and-drop checklist order, and a nightly cleanup of orphaned files.
 3. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check, and notes for Windows.
