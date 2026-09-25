@@ -3,12 +3,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RequestStatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { actorName, describeEvent, itemLabel } from "@/lib/activity";
 import { requireStaff } from "@/lib/auth";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
 import { RequestEditor } from "../request-editor";
+import { Activity } from "./activity";
 import { RequestActions } from "./request-actions";
 import { ReviewItems } from "./review-items";
 
@@ -69,6 +71,34 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
     );
   }
 
+  const [events, members, contacts] = await Promise.all([
+    supabase
+      .from("request_events")
+      .select("id, kind, item_id, actor_id, detail, created_at")
+      .eq("request_id", request.id)
+      .order("id", { ascending: false }),
+    supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId),
+    supabase.from("client_contacts").select("user_id, full_name").eq("client_id", request.client_id),
+  ]);
+  if (events.error) throw events.error;
+  if (members.error) throw members.error;
+  if (contacts.error) throw contacts.error;
+  // Staff names win for a user who is also this client's contact.
+  const names = new Map([
+    ...contacts.data.map((contact) => [contact.user_id, contact.full_name] as const),
+    ...members.data.map((member) => [member.user_id, member.full_name] as const),
+  ]);
+  const titles = new Map(request.request_items.map((item) => [item.id, item.title]));
+  const activity = events.data.map((event) => {
+    const detail = (event.detail ?? {}) as Record<string, unknown>;
+    return {
+      id: event.id,
+      actor: actorName(event.actor_id, names),
+      text: describeEvent(event.kind, detail, itemLabel(event.item_id, detail, titles)),
+      at: formatDateTime(event.created_at, staff.timeZone),
+    };
+  });
+
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -114,6 +144,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           })),
         }))}
       />
+      <Activity events={activity} />
     </>
   );
 }
