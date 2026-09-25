@@ -40,7 +40,7 @@ npm install client-zip
 
 - [ ] **Step 2: Add the route**
 
-Create `app/api/requests/[id]/zip/route.ts`. Access is checked twice over: `getStaff()` plus `.eq("firm_id", staff.firmId)` restricts it to members of the request's firm (contacts can read the request, so RLS alone is not enough here), and the signed URLs are created with the user-scoped client. Entry names come from `zipEntryNames()` (Phase 1): `{NN} {item title}/{filename}`, with suffixes for duplicates. A file that cannot be signed fails the request before streaming starts, instead of cutting the zip short, and the response is never cached.
+Create `app/api/requests/[id]/zip/route.ts`. Access is checked twice over: `getStaff()` plus `.eq("firm_id", staff.firmId)` restricts it to members of the request's firm (contacts can read the request, so RLS alone is not enough here), and the signed URLs are created with the user-scoped client. Entry names come from `zipEntryNames()` (Phase 1): `{NN} {item title}/{filename}`, with suffixes for duplicates. A malformed id is a 404, a failed lookup throws rather than reading as not found, a file that cannot be signed fails the request before streaming starts instead of cutting the zip short, and the response is never cached.
 
 ```ts
 import { NextResponse } from "next/server";
@@ -48,6 +48,7 @@ import { downloadZip } from "client-zip";
 import { getStaff } from "@/lib/auth";
 import { zipEntryNames } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 
 // ponytail: zip size is limited by the 300-second function duration.
 // Upgrade path: download files individually, or build zips in a background job.
@@ -56,11 +57,12 @@ export const maxDuration = 300;
 /** Streams every file of a request as one zip. Staff of the request's firm only. */
 export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[id]/zip">) {
   const { id } = await ctx.params;
+  if (!isId(id)) return new NextResponse("Not found", { status: 404 });
   const staff = await getStaff();
   if (!staff) return new NextResponse("Not found", { status: 404 });
 
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error: requestError } = await supabase
     .from("requests")
     .select("title, request_items(position, title, item_files(storage_path, filename, created_at))")
     .eq("id", id)
@@ -69,6 +71,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[i
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (requestError) throw requestError;
   if (!request) return new NextResponse("Not found", { status: 404 });
 
   const files = request.request_items.flatMap((item, index) =>
@@ -141,8 +144,8 @@ git commit -m "feat: stream a request's files as one zip"
 Create `lib/daily-jobs.ts`. It follows spec section 11.2:
 - Reminder candidates are `open` requests whose client is not archived and that have at least one `requested` or `needs_changes` item. `reminderDue()` (Phase 1) decides the day. The client's contacts come embedded in the same query.
 - A firm's emails are all built first, so an error in a query or template cannot use up a claim. They are then claimed in one `upsert(…, { ignoreDuplicates: true })` on `unique (kind, target_id, sent_on)`, which is `insert … on conflict do nothing returning`. Only the returned rows were won; the rest were already claimed today. The run stops before any claim when `emailConfigError()` (Phase 1) reports unusable settings.
-- A digest window starts at the member's previous claim, or 24 hours ago if there is none, so a missed day is covered by the next run. A claim records the run's own time, where the next window starts, so no submission falls between two windows. Members with nothing in the window get no digest and no claim.
-- Every query error is thrown, and every read is paged, because PostgREST returns at most 1,000 rows (`max_rows`) without an error.
+- A digest window starts at the member's previous claim, or 24 hours ago if there is none, so a missed day is covered by the next run. A claim records the run's own time, where the next window starts, so no submission falls between two windows. Only claims made since the member joined count, so someone who changes firms starts with the 24-hour window. Members with nothing in the window get no digest and no claim.
+- Every query error is thrown. Every read is paged, because PostgREST returns at most 1,000 rows (`max_rows`) without an error. Each page starts after the previous page's last row (keyset paging): offset pages would shift when rows change during the run, and a request could get two reminders or none.
 - Firms run five at a time, and emails go out in full batches while the run continues, so a run cut off at the 300-second limit loses little.
 - Reminder reply-to is the request's creator while they are still a member; digests have none.
 
@@ -157,7 +160,7 @@ import { reminderDue } from "@/lib/reminders";
 
 type Admin = SupabaseClient<Database>;
 type Firm = { id: string; name: string };
-type Member = { user_id: string; email: string };
+type Member = { user_id: string; email: string; created_at: string };
 /** The emails to send if this run wins today's (kind, target) claim. */
 type Notification = { kind: "reminder" | "staff_digest"; targetId: string; emails: EmailMessage[] };
 
@@ -171,16 +174,22 @@ export type DailySummary = {
 };
 
 // PostgREST cuts responses off at max_rows (1000 by default) without an error. A page larger
-// than max_rows would come back short and end the read early.
+// than max_rows would come back short and end the read early (see the README).
 const PAGE_SIZE = 1000;
 const FIRM_CONCURRENCY = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const NIL_UUID = "00000000-0000-0000-0000-000000000000"; // sorts before every generated id
 
-/** Every row of a query, read a page at a time. The query must have a stable order. */
-async function readAll<Row>(page: (from: number, to: number) => PromiseLike<PostgrestResponse<Row>>): Promise<Row[]> {
+/**
+ * Every row of a query, a page at a time. Each page starts after the previous
+ * page's last row (keyset paging), so rows that change during the read cannot
+ * shift others into a second page or out of both. Callers type `last` with the
+ * key columns they page by.
+ */
+async function readAll<Row>(page: (last: Row | undefined) => PromiseLike<PostgrestResponse<Row>>): Promise<Row[]> {
   const rows: Row[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+  for (;;) {
+    const { data, error } = await page(rows.at(-1));
     if (error) throw error;
     rows.push(...data);
     if (data.length < PAGE_SIZE) return rows;
@@ -189,7 +198,7 @@ async function readAll<Row>(page: (from: number, to: number) => PromiseLike<Post
 
 /** Open requests of active clients that have open items and a reminder day today. */
 async function reminders(admin: Admin, firm: Firm, members: Member[], today: string): Promise<Notification[]> {
-  const requests = await readAll((from, to) =>
+  const requests = await readAll((last?: { id: string }) =>
     admin
       .from("requests")
       .select(
@@ -199,9 +208,10 @@ async function reminders(admin: Admin, firm: Firm, members: Member[], today: str
       .eq("status", "open")
       .is("clients.archived_at", null)
       .in("request_items.status", ["requested", "needs_changes"])
+      .gt("id", last?.id ?? NIL_UUID)
       .order("id")
       .order("position", { referencedTable: "request_items" })
-      .range(from, to),
+      .limit(PAGE_SIZE),
   );
 
   return requests.flatMap((request): Notification[] => {
@@ -231,7 +241,8 @@ async function reminders(admin: Admin, firm: Firm, members: Member[], today: str
 /**
  * Each member's digest of the items submitted since their previous digest
  * claim, or in the last 24 hours if there is none, so a missed day is covered.
- * Members with nothing new get no digest.
+ * Only claims made since the member joined count, so someone who changes firms
+ * starts fresh. Members with nothing new get no digest.
  */
 async function digests(admin: Admin, firm: Firm, members: Member[], today: string, now: Date): Promise<Notification[]> {
   const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
@@ -243,6 +254,7 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
         .eq("kind", "staff_digest")
         .eq("target_id", member.user_id)
         .lt("sent_on", today)
+        .gt("created_at", member.created_at)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -255,17 +267,21 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
   const windows = Map.groupBy(members, (_member, index) => starts[index]);
   const results = await Promise.all(
     [...windows].map(async ([start, windowMembers]) => {
-      const items = await readAll((from, to) =>
-        admin
+      const items = await readAll((last?: { id: string; submitted_at: string | null }) => {
+        const query = admin
           .from("request_items")
-          .select("title, request_id, requests!inner(title, clients!inner(name))")
+          .select("id, title, request_id, submitted_at, requests!inner(title, clients!inner(name))")
           .eq("firm_id", firm.id)
           .gt("submitted_at", start)
           .lte("submitted_at", now.toISOString())
           .order("submitted_at")
           .order("id")
-          .range(from, to),
-      );
+          .limit(PAGE_SIZE);
+        // After the previous page's last (submitted_at, id); items can share a timestamp.
+        return last
+          ? query.or(`submitted_at.gt."${last.submitted_at}",and(submitted_at.eq."${last.submitted_at}",id.gt.${last.id})`)
+          : query;
+      });
       if (items.length === 0) return [];
 
       const groups = new Map<string, DigestGroup>();
@@ -296,7 +312,8 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
  * Claims today's (kind, target) rows in notifications_sent in one statement
  * and returns the notifications this run won, so each goes out at most once
  * per day. created_at is the run's time, where the next digest window starts.
- * ponytail: a failed send after a claim is not retried. Upgrade path: an outbox with retries.
+ * ponytail: an email whose send fails, or never starts because the run hits its
+ * 300-second limit, is not retried after its claim. Upgrade path: an outbox with retries.
  */
 async function claim(admin: Admin, notifications: Notification[], today: string, now: Date): Promise<Notification[]> {
   if (notifications.length === 0) return [];
@@ -314,8 +331,14 @@ async function claim(admin: Admin, notifications: Notification[], today: string,
 
 /** A firm's reminders and digests, built in full before they are claimed so an error cannot use up today's claims. */
 async function claimFirm(admin: Admin, firm: Firm, today: string, now: Date): Promise<Notification[]> {
-  const members = await readAll((from, to) =>
-    admin.from("firm_members").select("user_id, email").eq("firm_id", firm.id).order("user_id").range(from, to),
+  const members = await readAll((last?: { user_id: string }) =>
+    admin
+      .from("firm_members")
+      .select("user_id, email, created_at")
+      .eq("firm_id", firm.id)
+      .gt("user_id", last?.user_id ?? NIL_UUID)
+      .order("user_id")
+      .limit(PAGE_SIZE),
   );
   const [due, digest] = await Promise.all([
     reminders(admin, firm, members, today),
@@ -332,7 +355,9 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
 
   const today = todayUtc(now);
   const summary: DailySummary = { firms: 0, failedFirms: 0, reminders: 0, digests: 0, sent: 0, failed: 0 };
-  const firms = await readAll((from, to) => admin.from("firms").select("id, name").order("id").range(from, to));
+  const firms = await readAll((last?: { id: string }) =>
+    admin.from("firms").select("id, name").gt("id", last?.id ?? NIL_UUID).order("id").limit(PAGE_SIZE),
+  );
 
   // Full batches go out while firms are still processed, so a run cut short loses little.
   const queue: EmailMessage[] = [];
@@ -609,11 +634,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const firmId of [firm, bulkFirm].filter(Boolean)) {
-    await admin.from("clients").delete().eq("firm_id", firmId);
-    await admin.from("firms").delete().eq("id", firmId);
+    await rows(admin.from("clients").delete().eq("firm_id", firmId));
+    await rows(admin.from("firms").delete().eq("id", firmId));
   }
-  for (const { id } of Object.values(users)) await admin.auth.admin.deleteUser(id);
-  await admin.from("notifications_sent").delete().gte("sent_on", "2031-01-01");
+  for (const { id } of Object.values(users)) {
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) throw error;
+  }
+  await rows(admin.from("notifications_sent").delete().gte("sent_on", "2031-01-01"));
 }, 120_000);
 
 it("sends each due reminder and digest once, past PostgREST's row limit", async () => {
@@ -656,10 +684,22 @@ it("sends each due reminder and digest once, past PostgREST's row limit", async 
 }, 120_000);
 
 it("starts a digest window at the previous digest, or 24 hours back for a new member", async () => {
+  // staffC is new; staffB leaves and rejoins after the day 0 digest, which then no longer counts.
+  await rows(admin.from("firm_members").delete().eq("user_id", users.staffB.id));
   await rows(
     admin
       .from("firm_members")
       .insert({ firm_id: firm, user_id: users.staffC.id, role: "staff", full_name: "staffC", email: users.staffC.email }),
+  );
+  await rows(
+    admin.from("firm_members").insert({
+      firm_id: firm,
+      user_id: users.staffB.id,
+      role: "staff",
+      full_name: "staffB",
+      email: users.staffB.email,
+      created_at: at(1),
+    }),
   );
   await rows(
     admin.from("request_items").insert([
@@ -671,15 +711,15 @@ it("starts a digest window at the previous digest, or 24 hours back for a new me
 
   // No run on day 1: the day 2 run covers it.
   expect((await runDailyJobs(admin, hoursFromStart(48))).failedFirms).toBe(0);
-  for (const name of ["staffA", "staffB"]) {
-    const [digest] = inbox(name);
-    expect(digest.text).toContain("Just after");
-    expect(digest.text).toContain("Missed day");
-    expect(digest.text).not.toContain("Receipts");
+  const [digest] = inbox("staffA");
+  expect(digest.text).toContain("Just after");
+  expect(digest.text).toContain("Missed day");
+  expect(digest.text).not.toContain("Receipts");
+  for (const name of ["staffB", "staffC"]) {
+    const [fresh] = inbox(name);
+    expect(fresh.text).toContain("Missed day");
+    expect(fresh.text).not.toContain("Just after");
   }
-  const [newMember] = inbox("staffC");
-  expect(newMember.text).toContain("Missed day");
-  expect(newMember.text).not.toContain("Just after");
 }, 120_000);
 
 it("claims nothing when emails cannot be built or sent", async () => {
@@ -822,6 +862,8 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
    npx supabase db push
    ```
 
+   Keep "Max rows" in the project's API settings at 1,000 or more (the default). The daily job reads 1,000 rows at a time and treats a shorter page as the last one.
+
 2. In the Supabase dashboard, under Authentication:
    - Set the email OTP length to 6.
    - Keep "Confirm email" on (the default). With it off, anyone could sign up with a password for someone else's address and get a session.
@@ -853,7 +895,7 @@ npm run build
 npm run test:e2e
 ```
 
-Expected: pgTAP `Files=15, Tests=198, Result: PASS`; Vitest `Tests  47 passed (47)`, then `Tests  3 passed (3)` for the integration test; typecheck, lint, and build succeed; Playwright `1 passed`.
+Expected: pgTAP `Files=15, Tests=198, Result: PASS`; Vitest `Tests  53 passed (53)`, then `Tests  3 passed (3)` for the integration test; typecheck, lint, and build succeed; Playwright `1 passed`.
 
 Optionally run `npx supabase db advisors --local`. It reports only `multiple_permissive_policies` warnings: the staff and contact read rules are separate policies on purpose, one per actor, to match spec section 8.2.
 

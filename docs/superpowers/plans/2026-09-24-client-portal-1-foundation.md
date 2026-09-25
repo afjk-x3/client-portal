@@ -28,7 +28,7 @@
 | `lib/validation.ts` | zod schemas shared by forms and Server Actions |
 | `lib/email/templates.ts` | The five email templates, HTML-escaped |
 | `lib/email/send.ts` | Resend wrapper with log mode and batching |
-| `lib/*.test.ts`, `lib/email/templates.test.ts` | Unit tests |
+| `lib/*.test.ts`, `lib/email/*.test.ts` | Unit tests |
 
 ---
 
@@ -818,7 +818,7 @@ git commit -m "feat: add constants, action results, and validation schemas"
 
 **Files:**
 - Create: `lib/email/templates.ts`, `lib/email/send.ts`
-- Test: `lib/email/templates.test.ts`
+- Test: `lib/email/templates.test.ts`, `lib/email/send.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1064,13 +1064,118 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
 Run: `npm test -- lib/email`
 Expected: PASS, `Tests  7 passed (7)`.
 
-- [ ] **Step 5: Write the sender**
+- [ ] **Step 5: Write the sender's failing test**
 
 ```bash
 npm install resend server-only
 ```
 
-Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests), except in a Vercel production deployment, where a missing key is reported as a failure. `emailConfigError()` gives that verdict up front, so the daily job (Phase 7) can stop before it claims anything. With a key it sends batches of at most 100 through `resend.batch.send` in permissive mode, so one rejected address never drops the rest of the batch. Calls are spaced 600 ms apart across the whole process, so concurrent callers also stay under Resend's default rate limit. `EMAIL_FROM` may be a bare address or `Name <address>`. It never throws.
+Create `lib/email/send.test.ts`. It mocks Resend and checks the settings verdict, batches of 100 with rejected addresses counted, one retry after a rate limit, and the spacing between calls from concurrent callers. Fake timers keep it fast.
+
+```ts
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { emailConfigError, sendEmails, type EmailMessage } from "@/lib/email/send";
+
+vi.mock("server-only", () => ({}));
+const { batchSend } = vi.hoisted(() => ({ batchSend: vi.fn() }));
+vi.mock("resend", () => ({
+  Resend: class {
+    batch = { send: batchSend };
+  },
+}));
+
+const message = (to: string): EmailMessage => ({ subject: "S", html: "<p>H</p>", text: "H", to, fromName: "Ledger & Co" });
+const accepted = (errors: { index: number; message: string }[] = []) => ({ data: { data: [], errors }, error: null });
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  batchSend.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
+describe("emailConfigError", () => {
+  it("allows log mode outside production only", () => {
+    vi.stubEnv("RESEND_API_KEY", "");
+    vi.stubEnv("VERCEL_ENV", "");
+    expect(emailConfigError()).toBeNull();
+    vi.stubEnv("VERCEL_ENV", "production");
+    expect(emailConfigError()).toBe("RESEND_API_KEY is not set");
+  });
+
+  it("needs a sender address with a key", () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "");
+    expect(emailConfigError()).toBe("EMAIL_FROM is not set");
+    vi.stubEnv("EMAIL_FROM", "Portal <notify@example.com>");
+    expect(emailConfigError()).toBeNull();
+  });
+});
+
+describe("sendEmails", () => {
+  beforeEach(() => {
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "Portal <notify@example.com>");
+  });
+
+  it("sends batches of 100 and counts rejected addresses", async () => {
+    batchSend.mockResolvedValue(accepted([{ index: 1, message: "Invalid `to` field" }]));
+    const result = sendEmails(Array.from({ length: 150 }, (_, i) => message(`c${i}@example.com`)));
+    await vi.runAllTimersAsync();
+
+    expect(await result).toEqual({ sent: 148, failed: 2 });
+    expect(batchSend.mock.calls.map(([payload]) => payload.length)).toEqual([100, 50]);
+    expect(batchSend.mock.calls[0][0][0].from).toBe('"Ledger & Co via Client Portal" <notify@example.com>');
+    expect(batchSend.mock.calls[0][1]).toEqual({ batchValidation: "permissive" });
+  });
+
+  it("retries a rate-limited batch once", async () => {
+    batchSend
+      .mockResolvedValueOnce({ data: null, error: { name: "rate_limit_exceeded", statusCode: 429, message: "Too many requests" } })
+      .mockResolvedValueOnce(accepted());
+    const result = sendEmails([message("c@example.com")]);
+    await vi.runAllTimersAsync();
+
+    expect(await result).toEqual({ sent: 1, failed: 0 });
+    expect(batchSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts a batch Resend refuses as failed, without throwing", async () => {
+    batchSend.mockResolvedValue({ data: null, error: { name: "validation_error", statusCode: 422, message: "Bad" } });
+    const result = sendEmails([message("a@example.com"), message("b@example.com")]);
+    await vi.runAllTimersAsync();
+
+    expect(await result).toEqual({ sent: 0, failed: 2 });
+    expect(batchSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("spaces calls 600 ms apart, even across concurrent callers", async () => {
+    const started: number[] = [];
+    batchSend.mockImplementation(async () => {
+      started.push(Date.now());
+      return accepted();
+    });
+    const results = Promise.all([sendEmails([message("a@example.com")]), sendEmails([message("b@example.com")])]);
+    await vi.runAllTimersAsync();
+    await results;
+
+    expect(started).toHaveLength(2);
+    expect(started[1] - started[0]).toBeGreaterThanOrEqual(600);
+  });
+});
+```
+
+- [ ] **Step 6: Run it to make sure it fails**
+
+Run: `npm test -- lib/email/send.test.ts`
+Expected: FAIL, because `@/lib/email/send` cannot be resolved.
+
+- [ ] **Step 7: Write the sender**
+
+Create `lib/email/send.ts`. Without `RESEND_API_KEY` it logs each message instead of sending (development and tests), except in a Vercel production deployment, where a missing key is reported as a failure. `emailConfigError()` gives that verdict up front, so the daily job (Phase 7) can stop before it claims anything. With a key it sends batches of at most 100 through `resend.batch.send` in permissive mode, so one rejected address never drops the rest of the batch. Calls are spaced 600 ms apart across the whole process, so concurrent callers also stay under Resend's default rate limit, and a batch refused for the rate limit is retried once, a second later. `EMAIL_FROM` may be a bare address or `Name <address>`. It never throws.
 
 ```ts
 import "server-only";
@@ -1146,19 +1251,24 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
   for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
     await waitForSlot();
     const batch = messages.slice(i, i + EMAIL_BATCH_SIZE);
+    const payload = batch.map((m) => ({
+      from: fromHeader(m.fromName, address),
+      to: m.to,
+      subject: m.subject,
+      html: m.html,
+      text: m.text,
+      replyTo: m.replyTo,
+    }));
+    // Permissive: Resend sends the valid messages even if one is rejected.
+    const sendBatch = () => resend.batch.send(payload, { batchValidation: "permissive" });
     try {
-      // Permissive: Resend sends the valid messages even if one is rejected.
-      const { data, error } = await resend.batch.send(
-        batch.map((m) => ({
-          from: fromHeader(m.fromName, address),
-          to: m.to,
-          subject: m.subject,
-          html: m.html,
-          text: m.text,
-          replyTo: m.replyTo,
-        })),
-        { batchValidation: "permissive" },
-      );
+      let result = await sendBatch();
+      if (result.error?.name === "rate_limit_exceeded") {
+        // Another instance can share the limit, which Resend counts per second.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        result = await sendBatch();
+      }
+      const { data, error } = result;
       if (error) throw error;
       for (const rejected of data.errors) {
         console.error("[email] rejected", batch[rejected.index]?.to, rejected.message);
@@ -1174,12 +1284,17 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
 }
 ```
 
-- [ ] **Step 6: Verify the whole phase**
+- [ ] **Step 8: Run the tests to make sure they pass**
+
+Run: `npm test -- lib/email`
+Expected: PASS, `Tests  13 passed (13)`.
+
+- [ ] **Step 9: Verify the whole phase**
 
 Run: `npm test && npm run typecheck && npm run lint && npm run build`
-Expected: `Test Files  4 passed (4)`, `Tests  47 passed (47)`; typecheck, lint, and build succeed.
+Expected: `Test Files  5 passed (5)`, `Tests  53 passed (53)`; typecheck, lint, and build succeed.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add package.json package-lock.json lib/email
