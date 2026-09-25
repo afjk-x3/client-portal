@@ -53,7 +53,7 @@ describe("sendEmails", () => {
 
     expect(await result).toEqual({ sent: 148, failed: 2 });
     expect(batchSend.mock.calls.map(([payload]) => payload.length)).toEqual([100, 50]);
-    expect(batchSend.mock.calls[0][0][0].from).toBe('"Ledger & Co via Client Portal" <notify@example.com>');
+    expect(batchSend.mock.calls[0][0][0].from).toBe('"Ledger & Co via PaperLine" <notify@example.com>');
     expect(batchSend.mock.calls[0][1]).toEqual({ batchValidation: "permissive" });
   });
 

@@ -1,4 +1,4 @@
-# Client Portal
+# PaperLine
 
 Firms send clients a checklist of documents and questions. Clients sign in with a 6-digit code sent by email, upload files or answer each item, and submit it. Staff accept each item or return it with a note. Daily reminders chase open items, and a daily digest tells staff what arrived.
 

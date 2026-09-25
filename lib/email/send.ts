@@ -5,7 +5,7 @@ import type { EmailContent } from "@/lib/email/templates";
 
 export type EmailMessage = EmailContent & {
   to: string;
-  /** Shown as "{fromName} via Client Portal". */
+  /** Shown as "{fromName} via {APP_NAME}". */
   fromName: string;
   replyTo?: string;
 };
