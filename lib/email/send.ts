@@ -36,6 +36,33 @@ function fromHeader(fromName: string, address: string): string {
   return `"${name}" <${address}>`;
 }
 
+const RETRY_DELAYS_MS = [2_000, 8_000]; // before the second and the third attempt
+
+/** Up to 3 attempts, waiting between them, while `transient` says another try can succeed. */
+async function withRetries<T>(attempt: () => Promise<T>, transient: (error: unknown) => boolean): Promise<T> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (tries >= RETRY_DELAYS_MS.length || !transient(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[tries]));
+    }
+  }
+}
+
+/** A 4xx reply or a dropped connection can pass later; a 5xx reply or a refused login cannot. */
+function smtpTransient(error: unknown): boolean {
+  const { responseCode, code } = (error ?? {}) as { responseCode?: number; code?: string };
+  if (responseCode) return responseCode < 500;
+  return code !== "EAUTH" && code !== "EENVELOPE";
+}
+
+/** Rate limits (another instance can share them), Resend's server errors, and network failures. */
+function resendTransient(error: unknown): boolean {
+  const { name, statusCode } = (error ?? {}) as { name?: string; statusCode?: number | null };
+  return name === "rate_limit_exceeded" || (statusCode ?? 500) >= 500;
+}
+
 /** SMTP settings when SMTP_HOST is set, for example Gmail with an app password. */
 function smtpSettings() {
   const host = process.env.SMTP_HOST?.trim();
@@ -77,14 +104,18 @@ async function sendOverSmtp(
   });
   const results = await Promise.allSettled(
     messages.map((m) =>
-      transport.sendMail({
-        from: fromHeader(m.fromName, address),
-        to: m.to,
-        subject: m.subject,
-        html: m.html,
-        text: m.text,
-        replyTo: m.replyTo,
-      }),
+      withRetries(
+        () =>
+          transport.sendMail({
+            from: fromHeader(m.fromName, address),
+            to: m.to,
+            subject: m.subject,
+            html: m.html,
+            text: m.text,
+            replyTo: m.replyTo,
+          }),
+        smtpTransient,
+      ),
     ),
   );
   transport.close();
@@ -123,7 +154,6 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
   let sent = 0;
   let failed = 0;
   for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
-    await waitForSlot();
     const batch = messages.slice(i, i + EMAIL_BATCH_SIZE);
     const payload = batch.map((m) => ({
       from: fromHeader(m.fromName, address),
@@ -133,17 +163,14 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
       text: m.text,
       replyTo: m.replyTo,
     }));
-    // Permissive: Resend sends the valid messages even if one is rejected.
-    const sendBatch = () => resend.batch.send(payload, { batchValidation: "permissive" });
     try {
-      let result = await sendBatch();
-      if (result.error?.name === "rate_limit_exceeded") {
-        // Another instance can share the limit, which Resend counts per second.
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        result = await sendBatch();
-      }
-      const { data, error } = result;
-      if (error) throw error;
+      const data = await withRetries(async () => {
+        await waitForSlot();
+        // Permissive: Resend sends the valid messages even if one is rejected.
+        const { data, error } = await resend.batch.send(payload, { batchValidation: "permissive" });
+        if (error) throw error;
+        return data;
+      }, resendTransient);
       for (const rejected of data.errors) {
         console.error("[email] rejected", batch[rejected.index]?.to, rejected.message);
       }

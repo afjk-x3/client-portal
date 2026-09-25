@@ -160,8 +160,9 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
  * Claims today's (kind, target) rows in notifications_sent in one statement
  * and returns the notifications this run won, so each goes out at most once
  * per day. created_at is the run's time, where the next digest window starts.
- * ponytail: an email whose send fails, or never starts because the run hits its
- * 300-second limit, is not retried after its claim. Upgrade path: an outbox with retries.
+ * ponytail: sendEmails tries a failed send up to 3 times within the run. An email
+ * that still fails, or never starts because the run hits its 300-second limit, is
+ * lost after its claim. Upgrade path: an outbox that the next run sends again.
  */
 async function claim(admin: Admin, notifications: Notification[], today: string, now: Date): Promise<Notification[]> {
   if (notifications.length === 0) return [];
@@ -201,9 +202,9 @@ async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notificat
 
 /**
  * Reminders and staff digests for every firm. Each firm is isolated in its own try/catch.
- * ponytail: the job runs once a day at 13:00 UTC (vercel.json), so each firm gets
- * its emails at a different local hour. Upgrade path: run hourly and send at a
- * set local hour per firm.
+ * ponytail: the job runs once a day at 01:00 UTC (vercel.json), 9 am in UTC+8, so
+ * firms in other time zones get their emails at other local hours. Upgrade path:
+ * run hourly (Vercel Pro) and send at a set local hour per firm.
  */
 export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promise<DailySummary> {
   // Checked before any claim, so a missing key or sender cannot use up today's emails.

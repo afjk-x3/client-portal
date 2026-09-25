@@ -107,11 +107,30 @@ describe("sendEmails over SMTP", () => {
     expect(createTransport).toHaveBeenCalledWith(expect.objectContaining({ port: 587, secure: false }));
   });
 
-  it("counts a message the server refuses as failed and still sends the rest", async () => {
-    sendMail.mockRejectedValueOnce(new Error("550 5.1.1 No such user")).mockResolvedValueOnce({});
+  it("counts a message the server refuses as failed, without retrying it, and still sends the rest", async () => {
+    const refused = Object.assign(new Error("550 5.1.1 No such user"), { responseCode: 550 });
+    sendMail.mockRejectedValueOnce(refused).mockResolvedValueOnce({});
 
     expect(await sendEmails([message("gone@example.com"), message("b@example.com")])).toEqual({ sent: 1, failed: 1 });
+    expect(sendMail).toHaveBeenCalledTimes(2);
     expect(closeTransport).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a deferred message or a dropped connection, up to 3 attempts", async () => {
+    const attempts = (to: string) => sendMail.mock.calls.filter(([mail]) => mail.to === to).length;
+    sendMail.mockImplementation(async (mail: { to: string }) => {
+      if (mail.to === "busy@example.com" && attempts(mail.to) < 3) {
+        throw Object.assign(new Error("421 Try again later"), { responseCode: 421 });
+      }
+      if (mail.to === "down@example.com") throw Object.assign(new Error("Connection closed"), { code: "ECONNECTION" });
+      return {};
+    });
+    const result = sendEmails([message("busy@example.com"), message("down@example.com")]);
+    await vi.runAllTimersAsync();
+
+    expect(await result).toEqual({ sent: 1, failed: 1 });
+    expect(attempts("busy@example.com")).toBe(3);
+    expect(attempts("down@example.com")).toBe(3);
   });
 });
 
@@ -136,6 +155,17 @@ describe("sendEmails", () => {
   it("retries a rate-limited batch once", async () => {
     batchSend
       .mockResolvedValueOnce({ data: null, error: { name: "rate_limit_exceeded", statusCode: 429, message: "Too many requests" } })
+      .mockResolvedValueOnce(accepted());
+    const result = sendEmails([message("c@example.com")]);
+    await vi.runAllTimersAsync();
+
+    expect(await result).toEqual({ sent: 1, failed: 0 });
+    expect(batchSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a batch that fails with a server error", async () => {
+    batchSend
+      .mockResolvedValueOnce({ data: null, error: { name: "internal_server_error", statusCode: 500, message: "Oops" } })
       .mockResolvedValueOnce(accepted());
     const result = sendEmails([message("c@example.com")]);
     await vi.runAllTimersAsync();
