@@ -3,6 +3,7 @@ import { downloadZip } from "client-zip";
 import { getStaff } from "@/lib/auth";
 import { zipEntryNames } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
+import { isId } from "@/lib/validation";
 
 // ponytail: zip size is limited by the 300-second function duration.
 // Upgrade path: download files individually, or build zips in a background job.
@@ -11,11 +12,12 @@ export const maxDuration = 300;
 /** Streams every file of a request as one zip. Staff of the request's firm only. */
 export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[id]/zip">) {
   const { id } = await ctx.params;
+  if (!isId(id)) return new NextResponse("Not found", { status: 404 });
   const staff = await getStaff();
   if (!staff) return new NextResponse("Not found", { status: 404 });
 
   const supabase = await createClient();
-  const { data: request } = await supabase
+  const { data: request, error: requestError } = await supabase
     .from("requests")
     .select("title, request_items(position, title, item_files(storage_path, filename, created_at))")
     .eq("id", id)
@@ -24,6 +26,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[i
     .order("id", { referencedTable: "request_items" })
     .order("created_at", { referencedTable: "request_items.item_files" })
     .maybeSingle();
+  if (requestError) throw requestError;
   if (!request) return new NextResponse("Not found", { status: 404 });
 
   const files = request.request_items.flatMap((item, index) =>

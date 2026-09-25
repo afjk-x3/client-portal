@@ -55,6 +55,8 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
    npx supabase db push
    ```
 
+   Keep "Max rows" in the project's API settings at 1,000 or more (the default). The daily job reads 1,000 rows at a time and treats a shorter page as the last one.
+
 2. In the Supabase dashboard, under Authentication:
    - Set the email OTP length to 6.
    - Keep "Confirm email" on (the default). With it off, anyone could sign up with a password for someone else's address and get a session.

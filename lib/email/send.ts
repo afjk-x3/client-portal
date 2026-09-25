@@ -71,19 +71,24 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
   for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
     await waitForSlot();
     const batch = messages.slice(i, i + EMAIL_BATCH_SIZE);
+    const payload = batch.map((m) => ({
+      from: fromHeader(m.fromName, address),
+      to: m.to,
+      subject: m.subject,
+      html: m.html,
+      text: m.text,
+      replyTo: m.replyTo,
+    }));
+    // Permissive: Resend sends the valid messages even if one is rejected.
+    const sendBatch = () => resend.batch.send(payload, { batchValidation: "permissive" });
     try {
-      // Permissive: Resend sends the valid messages even if one is rejected.
-      const { data, error } = await resend.batch.send(
-        batch.map((m) => ({
-          from: fromHeader(m.fromName, address),
-          to: m.to,
-          subject: m.subject,
-          html: m.html,
-          text: m.text,
-          replyTo: m.replyTo,
-        })),
-        { batchValidation: "permissive" },
-      );
+      let result = await sendBatch();
+      if (result.error?.name === "rate_limit_exceeded") {
+        // Another instance can share the limit, which Resend counts per second.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        result = await sendBatch();
+      }
+      const { data, error } = result;
       if (error) throw error;
       for (const rejected of data.errors) {
         console.error("[email] rejected", batch[rejected.index]?.to, rejected.message);

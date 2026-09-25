@@ -19,5 +19,7 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,
+    // Emails are only logged, even when .env.local holds a real Resend key.
+    env: { RESEND_API_KEY: "" },
   },
 });

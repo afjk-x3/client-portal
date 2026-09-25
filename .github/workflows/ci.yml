@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     name: Unit tests, types, lint, build
@@ -34,6 +37,8 @@ jobs:
         run: npx supabase start
       - name: Database tests
         run: npm run test:db
+      - name: Generated types match the migrations
+        run: npm run db:types && git diff --exit-code lib/database.types.ts
       - name: Point the app at local Supabase
         run: |
           npx supabase status -o json > "$RUNNER_TEMP/supabase.json"

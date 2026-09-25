@@ -173,11 +173,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const firmId of [firm, bulkFirm].filter(Boolean)) {
-    await admin.from("clients").delete().eq("firm_id", firmId);
-    await admin.from("firms").delete().eq("id", firmId);
+    await rows(admin.from("clients").delete().eq("firm_id", firmId));
+    await rows(admin.from("firms").delete().eq("id", firmId));
   }
-  for (const { id } of Object.values(users)) await admin.auth.admin.deleteUser(id);
-  await admin.from("notifications_sent").delete().gte("sent_on", "2031-01-01");
+  for (const { id } of Object.values(users)) {
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) throw error;
+  }
+  await rows(admin.from("notifications_sent").delete().gte("sent_on", "2031-01-01"));
 }, 120_000);
 
 it("sends each due reminder and digest once, past PostgREST's row limit", async () => {
@@ -220,10 +223,22 @@ it("sends each due reminder and digest once, past PostgREST's row limit", async 
 }, 120_000);
 
 it("starts a digest window at the previous digest, or 24 hours back for a new member", async () => {
+  // staffC is new; staffB leaves and rejoins after the day 0 digest, which then no longer counts.
+  await rows(admin.from("firm_members").delete().eq("user_id", users.staffB.id));
   await rows(
     admin
       .from("firm_members")
       .insert({ firm_id: firm, user_id: users.staffC.id, role: "staff", full_name: "staffC", email: users.staffC.email }),
+  );
+  await rows(
+    admin.from("firm_members").insert({
+      firm_id: firm,
+      user_id: users.staffB.id,
+      role: "staff",
+      full_name: "staffB",
+      email: users.staffB.email,
+      created_at: at(1),
+    }),
   );
   await rows(
     admin.from("request_items").insert([
@@ -235,15 +250,15 @@ it("starts a digest window at the previous digest, or 24 hours back for a new me
 
   // No run on day 1: the day 2 run covers it.
   expect((await runDailyJobs(admin, hoursFromStart(48))).failedFirms).toBe(0);
-  for (const name of ["staffA", "staffB"]) {
-    const [digest] = inbox(name);
-    expect(digest.text).toContain("Just after");
-    expect(digest.text).toContain("Missed day");
-    expect(digest.text).not.toContain("Receipts");
+  const [digest] = inbox("staffA");
+  expect(digest.text).toContain("Just after");
+  expect(digest.text).toContain("Missed day");
+  expect(digest.text).not.toContain("Receipts");
+  for (const name of ["staffB", "staffC"]) {
+    const [fresh] = inbox(name);
+    expect(fresh.text).toContain("Missed day");
+    expect(fresh.text).not.toContain("Just after");
   }
-  const [newMember] = inbox("staffC");
-  expect(newMember.text).toContain("Missed day");
-  expect(newMember.text).not.toContain("Just after");
 }, 120_000);
 
 it("claims nothing when emails cannot be built or sent", async () => {
