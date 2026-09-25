@@ -3,7 +3,7 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-25. Every phase, every review fix, and the additions beyond the plan are done, including four features the user asked for afterwards. Those four still need an independent review (see Next steps).
+- **Last updated:** 2026-09-25. Every phase, every review fix, and the additions beyond the plan are done, including four features the user asked for afterwards. Those four were reviewed in a second session, which fixed three findings (see Review of the four features).
 
 This report was updated and pushed after every phase, so it stayed current if the session ended.
 
@@ -11,13 +11,13 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
-  - pgTAP: 250 tests in 20 files (the plan's 198, plus 6 for leaving a firm and 46 for the four new features).
-  - Vitest: 56 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - pgTAP: 254 tests in 20 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, and 4 from their review).
+  - Vitest: 57 unit tests, plus 3 integration tests that run the daily job against local Supabase.
   - Typecheck, lint, and the production build pass.
   - Playwright: 5 specs, the plan's happy path plus 4 broader suites.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
 - **CI on GitHub:** every run passed: [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906) for the workflow itself, and [run 3](https://github.com/afjk-x3/client-portal/actions/runs/36086359624) and [run 4](https://github.com/afjk-x3/client-portal/actions/runs/36086395404) for the Phase 7 fixes, the first with the integration test. The final push starts another run, which also checks that the generated types match the migrations.
-- **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, hosted Supabase settings, and the real shadcn/ui components (`ui.shadcn.com` stayed blocked; see Blockers).
+- **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, and hosted Supabase settings. The real shadcn/ui components replaced the hand-written ones in the second session, and every check passes with them.
 - **No pull request was opened**, since none was asked for.
 
 ## Status
@@ -80,11 +80,13 @@ This report was updated and pushed after every phase, so it stayed current if th
 | `6180c52` | Plan updated for the final review fixes |
 | `353f296` | Report: final review |
 | `33dbe1e` | Four features: firm time zones, sending to many clients, reminders on demand, staff uploads |
+| `a6f1b6e` | Review fixes for the four features |
+| `5dfe700` | Generated shadcn/ui components |
 
 ## Deviations from the plan
 
-- **Phase 1 Task 2: UI components written by hand.** `ui.shadcn.com` stayed blocked, so `components/ui/` was written to match shadcn's new-york v4 components: same file names, exports, props, and `data-slot` attributes, built on the `radix-ui` package with the same dependencies the CLI installs. The sidebar is a subset (no tooltip, rail, or menu sub-items, which the app does not use) and does not write the `sidebar_state` cookie, since nothing reads it. `npx shadcn@latest add <name> --overwrite` replaces any component with the generated one.
-- **`useIsMobile`** uses `useSyncExternalStore` instead of shadcn's effect, which the React Compiler lint rule `react-hooks/set-state-in-effect` rejects.
+- **Phase 1 Task 2: UI components written by hand, since replaced.** `ui.shadcn.com` stayed blocked in the first session, so `components/ui/` was written to match shadcn's new-york v4 components. The second session ran `npx shadcn@latest add <every component> --overwrite`. The generated components import `cn` from shadcn's `cn` package instead of `lib/utils.ts`, so that file and its `clsx` and `tailwind-merge` dependencies were removed; the CLI's direct `date-fns` dependency was removed too, since only `react-day-picker` uses it. Three local changes remain on generated code: the collapsed desktop sidebar is `inert` and the trigger sets `aria-expanded` (both from the Phase 3 review), and the unused `SidebarMenuSkeleton` keeps shadcn's `Math.random()` width under a lint exception.
+- **`useIsMobile`** uses `useSyncExternalStore` instead of shadcn's effect, which the React Compiler lint rule `react-hooks/set-state-in-effect` rejects. The CLI overwrites `hooks/use-mobile.ts` whenever it adds the sidebar; restore it afterwards.
 - **Phase 2 Task 8** was added to the plan for the security review's findings, as a new migration and new test files; the committed Phase 2 migrations are unchanged.
 - **Mobile sidebar:** links in the staff sidebar close it on phones, where it is a Sheet that would otherwise stay open over the new page (Phase 3 Task 4 file; checked at 390 px).
 - **Local email confirmation is on** (`supabase/config.toml`), matching hosted projects. New users get the "Confirm signup" email, which shows the same code.
@@ -152,6 +154,17 @@ This report was updated and pushed after every phase, so it stayed current if th
     - CI's image pulls from `public.ecr.aws` hit a rate limit once and the retry succeeded. `actions/checkout@v4` and `actions/setup-node@v4` warn that they run on Node 20. Both are left for later; the newer action versions could not be checked from here.
     - The end-to-end cron check counts digests for every firm. Per-member digests are covered by the integration test.
 
+- **Review of the four features** (second session, on Windows with Docker Desktop, with live probes through the real Storage API and PostgREST). Tenant isolation, the new functions' membership checks, and the caller-supplied ids held. Fixed in migration `20260925001500_upload_owner_and_time_zone_names.sql` and `app/portal/requests/[id]/upload.ts`:
+  - **Either side could take over the other's upload (Important).** `register_file` found the object by name only. A contact could register a staff upload before staff did, which made it the client's file, and then remove it; staff could do the same to a contact's upload. Storage records the uploader as `owner_id`, and `register_file` now requires it to be the caller. 2 new pgTAP tests; the fixtures now set `owner_id` as Storage does.
+  - **Time zones the app cannot use (Important).** The trigger accepted every `pg_timezone_names` entry, including 598 `posix/` copies and `Factory`, which `Intl.DateTimeFormat` rejects. An admin could store one through PostgREST, and any signed-in user through `create_firm`. That firm's staff pages then threw, and the daily job failed for it on every run, so the cron reported failure every day. The trigger now accepts only names that start with a capital letter, never `Factory`, and the migration moves any stored bad name to UTC. 2 new pgTAP tests.
+  - **Staff "Add files" froze (Minor).** It awaited `uploadFile` without a catch, so a dropped connection or a deployment left the button disabled and skipped the remaining files. This was the Phase 6 portal bug again: the portal's catch lived in its caller. `uploadFile` now catches and returns the retry message, so both callers are safe. 1 new Vitest test.
+  - **Not changed:**
+    - Either side can still delete the other side's upload between its upload and its registration. The uploader sees an error, and a retry works. A `ponytail:` marker in the migration names the upgrade path.
+    - A bulk send creates new request ids on every call, so resending after a lost response would create and email a second request for each client.
+    - `by_staff` follows firm membership, so a firm member who is also a contact of the firm's client uploads as the firm in the portal.
+    - The Send to clients page lists at most 1,000 clients (PostgREST's `max_rows`).
+    - Three actions repeat the same contact email fan-out.
+
 ## Additions beyond the plan
 
 - **Leave firm.** Admins add staff without the person's consent, and a user belongs to one firm at most, so someone added by mistake, or on purpose, could never set up their own firm (a Phase 2 review finding). Staff who are not admins can now leave from Settings; an admin must first be made staff by another admin, so every firm keeps one. A delete policy on the caller's own staff row (migration `20260925001000_leave_firm.sql`, 5 pgTAP tests) and a confirm dialog that ends in a full page load.
@@ -167,7 +180,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Blockers
 
-- **`ui.shadcn.com` is denied by the session's network policy** (proxy answers 403 to CONNECT; last checked 2026-09-25 02:21 UTC). Worked around with hand-written components (above). A new session may pick up the changed setting.
+- **`ui.shadcn.com` was denied by the first session's network policy** (proxy answered 403 to CONNECT). Worked around with hand-written components, which the second session replaced (above).
 - **Playwright's browser CDN is denied.** Worked around: the preinstalled Chromium is used through a local, uncommitted Playwright config that extends the committed one. CI installs Playwright's own browser.
 - **Docker images from `public.ecr.aws` are denied.** Worked around: `SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io`.
 
@@ -184,13 +197,11 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Next steps
 
-1. **Review the four new features.** Run an independent review of the time zones, reminders on demand, bulk send, and staff uploads, with the same security focus as the phase reviews (storage rules, the new database functions, and caller-supplied ids), and fix what it finds.
-2. **Real shadcn/ui components.** Where `ui.shadcn.com` is reachable, run `npx shadcn@latest add <name> --overwrite` for each file in `components/ui/`. Then run the checks and fix any call site whose props differ.
-3. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
+1. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
    - Sign-in codes arrive through Resend SMTP.
    - The cron runs at 13:00 UTC and its log shows the JSON summary.
    - A reminder and a digest arrive.
-4. **Before real customers:**
+2. **Before real customers:**
    - Review the ceilings marked `ponytail:` (spec section 18).
    - Move to paid plans (README).
-5. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check.
+3. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check, and notes for Windows.

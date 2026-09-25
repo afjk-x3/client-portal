@@ -21,6 +21,8 @@ npm run dev
 
 Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY` is empty, app emails are printed to the terminal instead of sent.
 
+On Windows, the `vector` log container keeps restarting because it cannot read Docker's logs; nothing in the app needs it, so `npx supabase start -x vector` skips it. If your network blocks `public.ecr.aws`, set `SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io` before running Supabase commands.
+
 ## Tests
 
 | Command | Runs |
