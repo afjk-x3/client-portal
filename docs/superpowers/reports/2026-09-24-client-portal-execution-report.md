@@ -3,20 +3,20 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-25. Final report: every phase, every review fix, and the additions beyond the plan are done.
+- **Last updated:** 2026-09-25. Final report: every phase, every review fix, the additions beyond the plan, and a final review of the later work are done.
 
 This report was updated and pushed after every phase, so it stayed current if the session ended.
 
 ## Final state
 
-- **All seven phases are done**, and each phase review's findings are fixed. The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
+- **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
-  - pgTAP: 203 tests in 16 files (the plan's 198, plus 5 for leaving a firm).
-  - Vitest: 47 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - pgTAP: 204 tests in 16 files (the plan's 198, plus 6 for leaving a firm).
+  - Vitest: 53 unit tests, plus 3 integration tests that run the daily job against local Supabase.
   - Typecheck, lint, and the production build pass.
   - Playwright: 4 specs, the plan's happy path plus 3 broader suites.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
-- **CI on GitHub:** both runs of the new workflow passed, [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906). The final push starts another run, which also runs the integration test.
+- **CI on GitHub:** every run passed: [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906) for the workflow itself, and [run 3](https://github.com/afjk-x3/client-portal/actions/runs/36086359624) and [run 4](https://github.com/afjk-x3/client-portal/actions/runs/36086395404) for the Phase 7 fixes, the first with the integration test. The final push starts another run, which also checks that the generated types match the migrations.
 - **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, hosted Supabase settings, and the real shadcn/ui components (`ui.shadcn.com` stayed blocked; see Blockers).
 - **No pull request was opened**, since none was asked for.
 
@@ -75,6 +75,9 @@ This report was updated and pushed after every phase, so it stayed current if th
 | `f72f947` | Report: additions beyond the plan |
 | `2cfb4fa` | Phase 7 review fixes |
 | `e23c615` | Plan updated for the Phase 7 review fixes |
+| `31e6467` | Final execution report |
+| `9723a54` | Final review fixes |
+| `dbeb751` | Plan updated for the final review fixes |
 
 ## Deviations from the plan
 
@@ -132,6 +135,21 @@ This report was updated and pushed after every phase, so it stayed current if th
     - The README gives the sign-in template subjects and the Playwright browser install.
   - **Test gap closed:** `npm run test:integration` runs the daily job against local Supabase with emails captured. It covers the reminder rules, digest windows across days (a missed day, a new member), paging past 1,000 rows, same-day reruns, and failures that must not use up claims. Run against the previous `lib/daily-jobs.ts`, all 3 tests fail. It was added to the plan (Phase 7 Task 2) and to CI.
 
+- **Final review** of everything committed after the phase reviews: the Phase 7 fixes, leaving a firm, the end-to-end suites, and CI. Verdict: ready, with no Critical or Important findings. It probed the job with a fake PostgREST, measured the pacing under concurrent callers, and confirmed from PostgREST's source that `max_rows` never limits writes. Fixed in `9723a54`:
+  - **Offset paging could send a reminder twice or skip one.** When a request changed between two page reads of a firm with over 1,000 open requests, rows shifted between pages. Reads now start each page after the previous page's last row (keyset paging); digest items page by submission time and id, since many can share a timestamp.
+  - **A digest after changing firms covered the whole gap.** The window started at the member's last claim at any firm. Only claims made since the member joined now count.
+  - **The zip route read a failed lookup as "Not found".** It now throws; malformed ids are still a 404.
+  - **Smaller items:**
+    - A rate-limited Resend batch is retried once, with new unit tests for the sender (settings, batching, rejected addresses, the retry, and pacing).
+    - The test server never sends real email.
+    - CI runs with a read-only token and checks that `lib/database.types.ts` matches the migrations.
+    - New tests cover a leaver's clients (left without an owner) and a member who rejoins (fresh digest window).
+    - The README says to keep "Max rows" at 1,000 or more.
+  - **Not changed:**
+    - Claims can run ahead of sends at very high volume (about 50,000 emails a run at Resend's default rate), so a run cut off at 300 seconds loses what it had claimed. The existing ceiling comment now names this case.
+    - CI's image pulls from `public.ecr.aws` hit a rate limit once and the retry succeeded. `actions/checkout@v4` and `actions/setup-node@v4` warn that they run on Node 20. Both are left for later; the newer action versions could not be checked from here.
+    - The end-to-end cron check counts digests for every firm. Per-member digests are covered by the integration test.
+
 ## Additions beyond the plan
 
 - **Leave firm.** Admins add staff without the person's consent, and a user belongs to one firm at most, so someone added by mistake, or on purpose, could never set up their own firm (a Phase 2 review finding). Staff who are not admins can now leave from Settings; an admin must first be made staff by another admin, so every firm keeps one. A delete policy on the caller's own staff row (migration `20260925001000_leave_firm.sql`, 5 pgTAP tests) and a confirm dialog that ends in a full page load.
@@ -151,7 +169,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 - Some tasks end without a commit by design (Phase 3 Task 2, Phase 4 Task 1); the next task's commit includes their files.
 - Implementers skip the plan's "check by hand" steps. The same flows are covered by the broader browser suites; the settings, templates, drafts, and open-request suite already passes against this repository.
 - The session hit its 5-hour usage limit at about 20:00 UTC, which stopped the Phase 6 review; work resumed after the reset.
-- The session was idle from about 22:00 to 02:05 UTC, and the container restarted in that time. Docker and the local Supabase stack were started again; the repository and the validated copy were intact.
+- The session was idle from about 22:00 to 02:05 UTC, and the container restarted in that time, and again at about 02:36 UTC. Each time, Docker and the local Supabase stack were started again; the repository and the validated copy were intact.
 - Browser runs on the validated copy after the hardening and the new components: the full happy path, the two broader suites (settings, templates, drafts, open-request edits, zip, downloads, redirects, cron), and a phone-width sidebar check all pass.
 - Subagents twice flagged `AGENTS.md` as a possible prompt injection. It is generated by Next.js 16 (`node_modules/next/dist/server/lib/generate-agent-files.js`) and is legitimate.
 
