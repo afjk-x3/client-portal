@@ -3,9 +3,22 @@
 - **Branch:** `claude/quirky-davinci-jna28e`
 - **Plan:** [`docs/superpowers/plans/2026-09-24-client-portal.md`](../plans/2026-09-24-client-portal.md)
 - **Method:** subagent-driven. A fresh implementer subagent runs each task's test-first steps and commits. The controller then checks that every file matches the code validated during planning byte for byte and re-runs the task's checks. Each phase ends with a review subagent.
-- **Last updated:** 2026-09-24, all phases and Phase 3–6 review fixes done, plus additions beyond the plan; Phase 7 review in progress
+- **Last updated:** 2026-09-25. Final report: every phase, every review fix, and the additions beyond the plan are done.
 
-This report is updated and pushed after every phase, so it stays current if the session ends.
+This report was updated and pushed after every phase, so it stayed current if the session ended.
+
+## Final state
+
+- **All seven phases are done**, and each phase review's findings are fixed. The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
+- **Checks on the final commit:**
+  - pgTAP: 203 tests in 16 files (the plan's 198, plus 5 for leaving a firm).
+  - Vitest: 47 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - Typecheck, lint, and the production build pass.
+  - Playwright: 4 specs, the plan's happy path plus 3 broader suites.
+  - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
+- **CI on GitHub:** both runs of the new workflow passed, [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906). The final push starts another run, which also runs the integration test.
+- **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, hosted Supabase settings, and the real shadcn/ui components (`ui.shadcn.com` stayed blocked; see Blockers).
+- **No pull request was opened**, since none was asked for.
 
 ## Status
 
@@ -17,9 +30,9 @@ This report is updated and pushed after every phase, so it stays current if the 
 | 4 Clients, templates, team | Done | End-to-end steps 1–2 pass. Review: one Important (template save not atomic) and several Minor, fixed in `d5477f7`. |
 | 5 Requests and review | Done | End-to-end steps 1–3 pass. Review: three Important (draft save not atomic, New request form carried to another client, review actions on archived requests) and several Minor, fixed in `d5477f7`. pgTAP now 193. |
 | 6 Client portal and files | Done | The complete end-to-end test passes. Review: four Important (upload queue froze, garbled download names, contacts could choose the saved extension, phone layout) and several Minor, fixed in `eb8372c`. pgTAP now 198. |
-| 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Final checks: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review in progress. |
+| 7 Zip, daily jobs, deployment | Done | Zip download; cron (401 without the secret, one reminder, nothing sent twice); README. Checks at the time: pgTAP 193/193, Vitest 46/46, typecheck, lint, build, end-to-end test, and 8 `ponytail:` ceiling markers. Advisors report only the intended `multiple_permissive_policies`. Review: four Important (a failed read still used up the day's claims, emails went out only after every firm, reads stopped at 1,000 rows, the README missed Resend's free-plan cap) and several Minor, fixed in `2cfb4fa`. |
 
-## Commits so far
+## Commits
 
 | Commit | Task |
 |---|---|
@@ -59,6 +72,9 @@ This report is updated and pushed after every phase, so it stays current if the 
 | `3c7aac9` | Addition: staff can leave their firm |
 | `3e4a85f` | Addition: end-to-end suites for staff workflows, the portal, and editing safeguards |
 | `749c3c1` | Addition: CI workflow |
+| `f72f947` | Report: additions beyond the plan |
+| `2cfb4fa` | Phase 7 review fixes |
+| `e23c615` | Plan updated for the Phase 7 review fixes |
 
 ## Deviations from the plan
 
@@ -78,7 +94,7 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **Minor:** contacts can delete only unregistered uploads (no dangling file rows); a sent request cannot go back to draft (which made it deletable); requests keep their client and items their request; a trigger keeps an admin in every firm under concurrency; contact document reads also check the firm segment.
   - **New tests:** 43 (pgTAP now 173), including the reviewer's coverage gaps: contacts writing their own `client_contacts` row, the firm segment on uploads, uploads to closed items, file RPCs on drafts and archived requests, a catalog guard for definer functions and policies, users with both roles, and anon.
   - **Not changed:** a submission racing an archive ends in the same state as submitting just before the archive, so it is not a bug; the reminder reply-to lookup is already limited to the firm's own members.
-  - **Deferred:** anyone can add any email as staff, and that person cannot leave or create their own firm. A "Leave firm" action for non-admin staff is planned after Phase 7.
+  - **Deferred:** anyone can add any email as staff, and that person cannot leave or create their own firm. A "Leave firm" action for non-admin staff was added after Phase 7 (see Additions beyond the plan).
 - **Phase 3** (code review with live probes of the proxy, cookies, sign-out, and Server Actions). No Critical issues. Fixed:
   - **Auth lookups swallowed query errors (Important).** A failed `firm_members` or `client_contacts` query read as "no membership", so during a database hiccup staff were sent to onboarding. They now throw, and a new root error boundary catches errors from the staff shell's layout, which `app/app/error.tsx` does not cover.
   - **Shared email limit (Important, deployment).** Supabase Auth has one email-sending limit for the whole project, so sign-in codes for every firm share it. The README's deployment steps now say to raise it, and to consider CAPTCHA if sign-in emails are abused.
@@ -102,16 +118,30 @@ This report is updated and pushed after every phase, so it stays current if the 
   - **Phone layout (Important).** A failed upload row pushed the page wider than a 375 px screen and hid the file name; failed rows now wrap.
   - **Minor:** unusable files are refused before queueing, failed rows can be dismissed, a failed registration deletes its upload (no orphans on retry), files dropped outside the drop zone are ignored, the orphan log also catches Storage's silent refusals, the portal shows an empty state when a contact has no sent requests, and buttons name their file or item for screen readers.
 
+- **Phase 7** (code review with a local production build, a probe that ran the job against the database, and a fetch-counting probe). The zip route and the reminder rules were right. Fixed:
+  - **A failed read still used up the day's claims (Important).** The contacts and previous-digest queries ignored their errors. When the contacts query failed, every due reminder was claimed, nobody was emailed, and a rerun sent nothing. Every query error is now thrown before anything is claimed.
+  - **One slow run could lose a whole day (Important).** Firms were processed one at a time with several sequential queries per member, and nothing was sent until every firm was done. A run cut off at the 300-second limit had used up its claims but sent no email, and the same would have happened every day. Now each firm's emails are built first and claimed in one statement. Firms run five at a time, and emails go out in batches of 100 while the run continues. Resend calls are spaced across the whole process, so concurrent batches stay under its rate limit. The README says to put functions in the Supabase project's region.
+  - **Reads stopped at 1,000 rows (Important).** PostgREST cuts responses off at `max_rows` without an error, so large firms would have silently lost reminders. Every job read is now paged, and contacts come embedded in the reminder query.
+  - **Resend's free plan (Important, deployment).** It allows 100 emails a day, SMTP included, so one busy reminder run could block every sign-in code until midnight UTC. The README now says to use a paid plan or a separate account for Supabase's SMTP.
+  - **Minor:**
+    - A digest claim records the run's own time, so an item submitted during a run is no longer left out of both digests.
+    - The job stops before claiming anything when the email settings cannot work.
+    - The cron route returns 500 when any firm or email failed, logs a missing `CRON_SECRET`, and compares the secret in constant time.
+    - A zip whose file cannot be signed fails before streaming starts, and zips are not cached.
+    - Zip entry names avoid what Windows cannot extract (trailing dots and spaces, `CON`, `NUL`).
+    - The README gives the sign-in template subjects and the Playwright browser install.
+  - **Test gap closed:** `npm run test:integration` runs the daily job against local Supabase with emails captured. It covers the reminder rules, digest windows across days (a missed day, a new member), paging past 1,000 rows, same-day reruns, and failures that must not use up claims. Run against the previous `lib/daily-jobs.ts`, all 3 tests fail. It was added to the plan (Phase 7 Task 2) and to CI.
+
 ## Additions beyond the plan
 
 - **Leave firm.** Admins add staff without the person's consent, and a user belongs to one firm at most, so someone added by mistake, or on purpose, could never set up their own firm (a Phase 2 review finding). Staff who are not admins can now leave from Settings; an admin must first be made staff by another admin, so every firm keeps one. A delete policy on the caller's own staff row (migration `20260925001000_leave_firm.sql`, 5 pgTAP tests) and a confirm dialog that ends in a full page load.
 - **End-to-end suites.** The reviews found flows that only a browser covers. Besides the plan's happy path, `npm run test:e2e` now runs staff workflows (settings, team, leaving a firm, templates, drafts, open-request edits, archive, sign-out), the portal and review loop (uploads, review, zip, exact download names, access rules, users who are both staff and contacts, the cron), and editing safeguards (typed values survive errors; pages kept mounted stay correct). Playwright runs one worker, because the specs share a database and the cron checks count every firm.
-- **Continuous integration.** `.github/workflows/ci.yml` runs two jobs on every push and pull request: Vitest, typecheck, lint, and build; then local Supabase with the pgTAP suite and the Playwright suites against a production build (`next build && next start`, chosen in `playwright.config.ts` when `CI` is set). The production-build run was checked locally: 4 passed.
+- **Continuous integration.** `.github/workflows/ci.yml` runs two jobs on every push and pull request: Vitest, typecheck, lint, and build; then local Supabase with the pgTAP suite and the Playwright suites against a production build (`next build && next start`, chosen in `playwright.config.ts` when `CI` is set). The production-build run was checked locally: 4 passed. Both runs on GitHub passed.
 
 ## Blockers
 
-- **`ui.shadcn.com` is denied by the session's network policy** (proxy answers 403 to CONNECT; last checked 18:28 UTC). Worked around with hand-written components (above). A new session may pick up the changed setting.
-- **Playwright's browser CDN is denied.** Worked around: the preinstalled Chromium is used through a local, uncommitted Playwright config. The committed config is unchanged.
+- **`ui.shadcn.com` is denied by the session's network policy** (proxy answers 403 to CONNECT; last checked 2026-09-25 02:21 UTC). Worked around with hand-written components (above). A new session may pick up the changed setting.
+- **Playwright's browser CDN is denied.** Worked around: the preinstalled Chromium is used through a local, uncommitted Playwright config that extends the committed one. CI installs Playwright's own browser.
 - **Docker images from `public.ecr.aws` are denied.** Worked around: `SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io`.
 
 ## Notes from execution
@@ -121,11 +151,18 @@ This report is updated and pushed after every phase, so it stays current if the 
 - Some tasks end without a commit by design (Phase 3 Task 2, Phase 4 Task 1); the next task's commit includes their files.
 - Implementers skip the plan's "check by hand" steps. The same flows are covered by the broader browser suites; the settings, templates, drafts, and open-request suite already passes against this repository.
 - The session hit its 5-hour usage limit at about 20:00 UTC, which stopped the Phase 6 review; work resumed after the reset.
+- The session was idle from about 22:00 to 02:05 UTC, and the container restarted in that time. Docker and the local Supabase stack were started again; the repository and the validated copy were intact.
 - Browser runs on the validated copy after the hardening and the new components: the full happy path, the two broader suites (settings, templates, drafts, open-request edits, zip, downloads, redirects, cron), and a phone-width sidebar check all pass.
 - Subagents twice flagged `AGENTS.md` as a possible prompt injection. It is generated by Next.js 16 (`node_modules/next/dist/server/lib/generate-agent-files.js`) and is legitimate.
 
-## How to resume
+## Next steps
 
-1. Check out `claude/quirky-davinci-jna28e`.
-2. Continue with the first phase in the status table that is not Done, following the phase plan linked from the plan index.
-3. Local stack: `npx supabase start` (with Docker running), `cp .env.example .env.local`, keys from `npx supabase status`.
+1. **Real shadcn/ui components.** Where `ui.shadcn.com` is reachable, run `npx shadcn@latest add <name> --overwrite` for each file in `components/ui/`. Then run the checks and fix any call site whose props differ.
+2. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
+   - Sign-in codes arrive through Resend SMTP.
+   - The cron runs at 13:00 UTC and its log shows the JSON summary.
+   - A reminder and a digest arrive.
+3. **Before real customers:**
+   - Review the ceilings marked `ponytail:` (spec section 18).
+   - Move to paid plans (README).
+4. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check.
