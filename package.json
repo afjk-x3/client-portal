@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:db": "supabase test db",
+    "test:integration": "vitest run --config vitest.integration.config.mts",
     "db:types": "supabase gen types typescript --local > lib/database.types.ts"
   },
   "dependencies": {

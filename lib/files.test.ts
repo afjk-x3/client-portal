@@ -64,4 +64,18 @@ describe("zipEntryNames", () => {
     expect(long).toBe(`01 Statements/${"s".repeat(96)}.pdf`);
     expect(dots).toBe("01 Statements/untitled");
   });
+
+  it("avoids names Windows cannot create", () => {
+    expect(
+      zipEntryNames([
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: "notes." },
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: "CON.pdf" },
+        { itemNumber: 7, itemTitle: "Anything else we should know.", filename: `${"s".repeat(99)} tail` },
+      ]),
+    ).toEqual([
+      "07 Anything else we should know/notes",
+      "07 Anything else we should know/_CON.pdf",
+      `07 Anything else we should know/${"s".repeat(99)}`,
+    ]);
+  });
 });

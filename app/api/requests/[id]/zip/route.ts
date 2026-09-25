@@ -38,7 +38,11 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[i
       maxDuration,
     );
     if (error) throw error;
-    signedUrls = data.map((entry) => entry.signedUrl ?? "");
+    // Checked before streaming starts, so a missing object fails the request instead of cutting the zip short.
+    signedUrls = data.map((entry) => {
+      if (!entry.signedUrl) throw new Error(`Could not sign ${entry.path}: ${entry.error}`);
+      return entry.signedUrl;
+    });
   }
 
   async function* entries() {
@@ -54,6 +58,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/requests/[i
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="${zipName}"`,
+      "Cache-Control": "private, no-store",
     },
   });
 }

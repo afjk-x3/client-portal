@@ -66,10 +66,14 @@ export function storagePath(
   return `${ids.firmId}/${ids.clientId}/${ids.itemId}/${id}-${sanitizeFilename(filename)}`;
 }
 
+// Device names Windows reserves, alone or before an extension.
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
 function zipSafe(name: string): string {
-  const safe = truncate(name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim(), 100);
-  // Extractors skip "." and "..", which would silently drop the file.
-  return safe === "" || safe === "." || safe === ".." ? "untitled" : safe;
+  // Windows drops trailing dots and spaces, and extractors skip "." and "..".
+  const safe = truncate(name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim(), 100).replace(/[. ]+$/, "");
+  if (safe === "") return "untitled";
+  return WINDOWS_RESERVED.test(safe) ? `_${safe}` : safe;
 }
 
 /**

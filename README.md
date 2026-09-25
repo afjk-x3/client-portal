@@ -27,7 +27,8 @@ Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY
 |---|---|
 | `npm test` | Vitest unit tests |
 | `npm run test:db` | pgTAP tests for tenant isolation, RPCs, and storage (local Supabase) |
-| `npm run test:e2e` | The Playwright end-to-end tests (starts `npm run dev`) |
+| `npm run test:integration` | The daily reminder and digest job against local Supabase (reads `.env.local`) |
+| `npm run test:e2e` | The Playwright end-to-end tests (starts `npm run dev`; run `npx playwright install chromium` once first) |
 | `npm run typecheck` | Route type generation and `tsc` |
 | `npm run lint` | ESLint |
 
@@ -57,11 +58,11 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
 2. In the Supabase dashboard, under Authentication:
    - Set the email OTP length to 6.
    - Keep "Confirm email" on (the default). With it off, anyone could sign up with a password for someone else's address and get a session.
-   - Replace the "Magic Link" and "Confirm signup" email templates with `supabase/templates/sign-in-code.html`. It shows `{{ .Token }}` and no link.
+   - Replace the "Magic Link" and "Confirm signup" email templates with `supabase/templates/sign-in-code.html`, and set both subjects to "Your sign-in code". The template shows `{{ .Token }}` and no link.
    - Configure custom SMTP with Resend.
    - Under Rate Limits, raise the email sending limit to your expected peak. Sign-in codes for every firm share this one limit, and the default is low. If sign-in emails are abused, turn on CAPTCHA protection (the sign-in form then needs a CAPTCHA widget).
    - Set the Site URL to the production domain.
-3. In Resend, verify the domain of `EMAIL_FROM`.
-4. In Vercel, set every variable above (use a long random `CRON_SECRET`) and deploy. `vercel.json` schedules `/api/cron/daily` at 13:00 UTC. On the Hobby plan it runs once at some point within that hour.
+3. In Resend, verify the domain of `EMAIL_FROM`. Resend's free plan sends at most 100 emails a day, counting SMTP, so a busy reminder run can use up the quota that sign-in codes need. Use a paid plan, or a separate Resend account for Supabase's SMTP.
+4. In Vercel, set every variable above (use a long random `CRON_SECRET`), set the function region to the one nearest your Supabase project, and deploy. `vercel.json` schedules `/api/cron/daily` at 13:00 UTC. On the Hobby plan it runs once at some point within that hour. A run where any firm or email fails returns an error status, so it shows as failed in the cron logs.
 
 Before charging customers, move to paid plans: Vercel Hobby is for non-commercial use only, and Supabase pauses inactive free projects.

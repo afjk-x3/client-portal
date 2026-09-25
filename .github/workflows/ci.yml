@@ -45,6 +45,8 @@ jobs:
               .replace(/^SUPABASE_SECRET_KEY=.*$/m, `SUPABASE_SECRET_KEY=${status.SECRET_KEY}`);
             fs.writeFileSync(".env.local", env);
           ' "$RUNNER_TEMP/supabase.json"
+      - name: Integration tests
+        run: npm run test:integration
       - run: npx playwright install --with-deps chromium
       - name: End-to-end tests
         run: npm run test:e2e

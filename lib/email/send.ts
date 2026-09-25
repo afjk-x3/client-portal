@@ -10,8 +10,18 @@ export type EmailMessage = EmailContent & {
   replyTo?: string;
 };
 
-const BATCH_SIZE = 100; // Resend's per-call maximum
+export const EMAIL_BATCH_SIZE = 100; // Resend's per-call maximum
 const PAUSE_MS = 600; // stay under Resend's default 2 requests per second
+
+let nextCallAt = 0;
+
+/** Waits for this process's next Resend slot, so concurrent callers stay under the rate limit too. */
+async function waitForSlot() {
+  const now = Date.now();
+  const at = Math.max(now, nextCallAt);
+  nextCallAt = at + PAUSE_MS;
+  if (at > now) await new Promise((resolve) => setTimeout(resolve, at - now));
+}
 
 /** The sender address from EMAIL_FROM, given as "addr" or "Name <addr>". */
 function senderAddress(): string | null {
@@ -26,37 +36,41 @@ function fromHeader(fromName: string, address: string): string {
 }
 
 /**
- * Sends emails in batches. Failures are logged and counted, never thrown.
- * Without RESEND_API_KEY each email is logged instead (development, tests);
- * in a Vercel production deployment a missing key is an error, never log mode.
+ * Why emails cannot be sent, or null. Without RESEND_API_KEY emails are logged
+ * instead (development, tests), except in a Vercel production deployment.
  */
+export function emailConfigError(): string | null {
+  if (!process.env.RESEND_API_KEY) {
+    return process.env.VERCEL_ENV === "production" ? "RESEND_API_KEY is not set" : null;
+  }
+  return senderAddress() ? null : "EMAIL_FROM is not set";
+}
+
+/** Sends emails in batches. Failures are logged and counted, never thrown. */
 export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
   if (messages.length === 0) return { sent: 0, failed: 0 };
 
+  const configError = emailConfigError();
+  if (configError) {
+    console.error(`[email] ${configError}; ${messages.length} emails not sent`);
+    return { sent: 0, failed: messages.length };
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    if (process.env.VERCEL_ENV === "production") {
-      console.error(`[email] RESEND_API_KEY is not set; ${messages.length} emails not sent`);
-      return { sent: 0, failed: messages.length };
-    }
+  const address = senderAddress();
+  if (!apiKey || !address) {
     for (const m of messages) {
       console.log(`[email] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);
     }
     return { sent: messages.length, failed: 0 };
   }
 
-  const address = senderAddress();
-  if (!address) {
-    console.error(`[email] EMAIL_FROM is not set; ${messages.length} emails not sent`);
-    return { sent: 0, failed: messages.length };
-  }
-
   const resend = new Resend(apiKey);
   let sent = 0;
   let failed = 0;
-  for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-    if (i > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
-    const batch = messages.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
+    await waitForSlot();
+    const batch = messages.slice(i, i + EMAIL_BATCH_SIZE);
     try {
       // Permissive: Resend sends the valid messages even if one is rejected.
       const { data, error } = await resend.batch.send(
