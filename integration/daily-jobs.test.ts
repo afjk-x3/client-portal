@@ -316,8 +316,9 @@ it("claims nothing when emails cannot be built or sent", async () => {
 
   vi.stubEnv("VERCEL_ENV", "production");
   vi.stubEnv("RESEND_API_KEY", "");
+  vi.stubEnv("SMTP_HOST", "");
   try {
-    await expect(runDailyJobs(admin, dueDay)).rejects.toThrow("RESEND_API_KEY is not set");
+    await expect(runDailyJobs(admin, dueDay)).rejects.toThrow("RESEND_API_KEY or SMTP_HOST is not set");
   } finally {
     vi.unstubAllEnvs();
   }

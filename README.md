@@ -19,7 +19,7 @@ cp .env.example .env.local  # then paste the keys printed by `npx supabase statu
 npm run dev
 ```
 
-Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY` is empty, app emails are printed to the terminal instead of sent.
+Sign-in codes arrive in Mailpit at http://127.0.0.1:54324. While `RESEND_API_KEY` and `SMTP_HOST` are empty, app emails are printed to the terminal instead of sent.
 
 On Windows, the `vector` log container keeps restarting because it cannot read Docker's logs; nothing in the app needs it, so `npx supabase start -x vector` skips it. If your network blocks `public.ecr.aws`, set `SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io` before running Supabase commands.
 
@@ -45,7 +45,10 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
 | `SUPABASE_SECRET_KEY` | Secret key (or the legacy service-role key). Server only. |
 | `NEXT_PUBLIC_SITE_URL` | Base URL for links in emails |
 | `RESEND_API_KEY` | Resend API key. Empty in development. |
-| `EMAIL_FROM` | Sender address on a domain verified in Resend |
+| `SMTP_HOST` | SMTP server for app emails instead of Resend, for example `smtp.gmail.com`. Used whenever it is set. Empty in development. |
+| `SMTP_PORT` | `465` (TLS, the default) or `587` (STARTTLS) |
+| `SMTP_USER`, `SMTP_PASS` | SMTP login. For Gmail: the address and an app password. |
+| `EMAIL_FROM` | Sender address: on a domain verified in Resend, or the SMTP account's own address |
 | `CRON_SECRET` | Bearer token that Vercel Cron sends to `/api/cron/daily` |
 
 ## Deploying
@@ -67,6 +70,8 @@ After changing a migration, run `npx supabase db reset` and then `npm run db:typ
    - Under Rate Limits, raise the email sending limit to your expected peak. Sign-in codes for every firm share this one limit, and the default is low. If sign-in emails are abused, turn on CAPTCHA protection (the sign-in form then needs a CAPTCHA widget).
    - Set the Site URL to the production domain.
 3. In Resend, verify the domain of `EMAIL_FROM`. Resend's free plan sends at most 100 emails a day, counting SMTP, so a busy reminder run can use up the quota that sign-in codes need. Use a paid plan, or a separate Resend account for Supabase's SMTP.
+
+   Without a domain (staging on a zero budget), use a dedicated Gmail account with 2-Step Verification and an app password for both: Supabase's custom SMTP (`smtp.gmail.com`, port 465) and the `SMTP_*` variables, with `EMAIL_FROM` set to the Gmail address. Gmail sends about 500 emails a day, shared by sign-in codes and app emails.
 4. In Vercel, set every variable above (use a long random `CRON_SECRET`), set the function region to the one nearest your Supabase project, and deploy. `vercel.json` schedules `/api/cron/daily` at 13:00 UTC. On the Hobby plan it runs once at some point within that hour. A run where any firm or email fails returns an error status, so it shows as failed in the cron logs.
 
 Before charging customers, move to paid plans: Vercel Hobby is for non-commercial use only, and Supabase pauses inactive free projects.

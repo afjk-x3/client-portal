@@ -1,4 +1,5 @@
 import "server-only";
+import { createTransport } from "nodemailer";
 import { Resend } from "resend";
 import { APP_NAME } from "@/lib/constants";
 import type { EmailContent } from "@/lib/email/templates";
@@ -35,18 +36,69 @@ function fromHeader(fromName: string, address: string): string {
   return `"${name}" <${address}>`;
 }
 
+/** SMTP settings when SMTP_HOST is set, for example Gmail with an app password. */
+function smtpSettings() {
+  const host = process.env.SMTP_HOST?.trim();
+  if (!host) return null;
+  const port = Number(process.env.SMTP_PORT) || 465;
+  return { host, port, user: process.env.SMTP_USER?.trim(), pass: process.env.SMTP_PASS };
+}
+
 /**
- * Why emails cannot be sent, or null. Without RESEND_API_KEY emails are logged
- * instead (development, tests), except in a Vercel production deployment.
+ * Why emails cannot be sent, or null. SMTP_HOST sends over SMTP, RESEND_API_KEY
+ * through Resend. With neither, emails are logged instead (development, tests),
+ * except in a Vercel production deployment.
  */
 export function emailConfigError(): string | null {
-  if (!process.env.RESEND_API_KEY) {
-    return process.env.VERCEL_ENV === "production" ? "RESEND_API_KEY is not set" : null;
+  const smtp = smtpSettings();
+  if (smtp && (!smtp.user || !smtp.pass)) return "SMTP_USER and SMTP_PASS must be set with SMTP_HOST";
+  if (!smtp && !process.env.RESEND_API_KEY) {
+    return process.env.VERCEL_ENV === "production" ? "RESEND_API_KEY or SMTP_HOST is not set" : null;
   }
   return senderAddress() ? null : "EMAIL_FROM is not set";
 }
 
-/** Sends emails in batches. Failures are logged and counted, never thrown. */
+/**
+ * One pooled connection for the whole call, so the server sees one login.
+ * ponytail: Gmail allows about 500 emails a day. Upgrade path: a domain verified
+ * in Resend, with RESEND_API_KEY set and SMTP_HOST removed.
+ */
+async function sendOverSmtp(
+  smtp: NonNullable<ReturnType<typeof smtpSettings>>,
+  address: string,
+  messages: EmailMessage[],
+): Promise<{ sent: number; failed: number }> {
+  const transport = createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.port === 465, // TLS from the start; 587 upgrades with STARTTLS
+    pool: true,
+    auth: { user: smtp.user, pass: smtp.pass },
+  });
+  const results = await Promise.allSettled(
+    messages.map((m) =>
+      transport.sendMail({
+        from: fromHeader(m.fromName, address),
+        to: m.to,
+        subject: m.subject,
+        html: m.html,
+        text: m.text,
+        replyTo: m.replyTo,
+      }),
+    ),
+  );
+  transport.close();
+
+  let failed = 0;
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") return;
+    failed++;
+    console.error("[email] rejected", messages[index].to, result.reason);
+  });
+  return { sent: messages.length - failed, failed };
+}
+
+/** Sends emails over SMTP, or through Resend in batches. Failures are logged and counted, never thrown. */
 export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
   if (messages.length === 0) return { sent: 0, failed: 0 };
 
@@ -56,8 +108,10 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
     return { sent: 0, failed: messages.length };
   }
 
+  const smtp = smtpSettings();
   const apiKey = process.env.RESEND_API_KEY;
   const address = senderAddress();
+  if (smtp && address) return sendOverSmtp(smtp, address, messages);
   if (!apiKey || !address) {
     for (const m of messages) {
       console.log(`[email] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);

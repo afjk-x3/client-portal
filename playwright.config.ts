@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Runs against local Supabase (`npx supabase start`) with RESEND_API_KEY unset,
-// so app emails are logged and auth codes land in Mailpit.
+// Runs against local Supabase (`npx supabase start`) with RESEND_API_KEY and
+// SMTP_HOST unset, so app emails are logged and auth codes land in Mailpit.
 export default defineConfig({
   testDir: "./e2e",
   timeout: 120_000,
@@ -19,7 +19,7 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,
-    // Emails are only logged, even when .env.local holds a real Resend key.
-    env: { RESEND_API_KEY: "" },
+    // Emails are only logged, even when .env.local holds real Resend or SMTP settings.
+    env: { RESEND_API_KEY: "", SMTP_HOST: "" },
   },
 });

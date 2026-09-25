@@ -12,7 +12,7 @@ This report was updated and pushed after every phase, so it stayed current if th
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
   - pgTAP: 254 tests in 20 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, and 4 from their review).
-  - Vitest: 57 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - Vitest: 61 unit tests, plus 3 integration tests that run the daily job against local Supabase.
   - Typecheck, lint, and the production build pass.
   - Playwright: 5 specs, the plan's happy path plus 4 broader suites.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
@@ -178,6 +178,12 @@ This report was updated and pushed after every phase, so it stayed current if th
   - **Staff upload files for a client**, for documents that arrive by email or on paper. Staff add files to file items of open requests that are not accepted yet, including submitted ones, and clients see them marked as added by the firm. Each side removes only its own files, enforced by the storage rules, `register_file`, and `remove_file` (`20260925001400_staff_uploads.sql`, 16 new pgTAP tests, 2 updated).
   - A new browser spec covers all four. Every check listed under Final state passes on this commit.
 
+- **Second session (2026-09-25):**
+  - **Name.** The app is called PaperLine (`APP_NAME`, the sign-in email, the README). The repository, the npm package, and the local Supabase `project_id` keep their names.
+  - **App emails over SMTP.** With no budget for a domain, staging sends everything through one Gmail account. `lib/email/send.ts` uses SMTP whenever `SMTP_HOST` is set: one pooled `nodemailer` connection per call, TLS on 465 or STARTTLS on 587, and a refused message counted as failed without stopping the rest. Resend stays the path for a verified domain. Browser tests blank `SMTP_HOST` as well as `RESEND_API_KEY`. 4 new unit tests.
+  - **Staging project.** `paperline-staging` in Tokyo (`ap-northeast-1`): all 15 migrations applied, the `documents` bucket, both guard triggers, and RLS on every public table checked. Advisors add warnings that signed-in users can call the security-definer helpers and RPCs, which is intended, and one for Supabase's own `rls_auto_enable` event-trigger function. Auth: 6-digit codes, "Confirm email" on, both templates, and custom SMTP through Gmail. A sign-up from the app against staging received its code and created a firm.
+  - **This network's DNS** answers `::` for `public.ecr.aws` and `*.pooler.supabase.com`, and direct IPv6 is not routable. Local images come from `ghcr.io` (`SUPABASE_INTERNAL_IMAGE_REGISTRY`), and hosted database commands add `--dns-resolver https`.
+
 ## Blockers
 
 - **`ui.shadcn.com` was denied by the first session's network policy** (proxy answered 403 to CONNECT). Worked around with hand-written components, which the second session replaced (above).
@@ -197,8 +203,8 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 ## Next steps
 
-1. **Staging deployment.** Follow the README's Deploying section. Then check what could not be checked here:
-   - Sign-in codes arrive through Resend SMTP.
+1. **Staging deployment.** Supabase is done (above). Deploy to Vercel with the `SMTP_*` variables, set the Supabase Site URL to the Vercel domain, then check:
+   - Sign-in codes arrive through Gmail from the deployed app.
    - The cron runs at 13:00 UTC and its log shows the JSON summary.
    - A reminder and a digest arrive.
 2. **Before real customers:**
