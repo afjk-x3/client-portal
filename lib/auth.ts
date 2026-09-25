@@ -9,6 +9,8 @@ export type Staff = {
   firmId: string;
   role: "admin" | "staff";
   fullName: string;
+  /** The firm's IANA time zone: its "today" and the times staff see. */
+  timeZone: string;
 };
 
 /** The signed-in user, or null. Verifies the JWT. */
@@ -26,7 +28,7 @@ export const getStaff = cache(async (): Promise<Staff | null> => {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("firm_members")
-    .select("firm_id, role, full_name, email")
+    .select("firm_id, role, full_name, email, firms(time_zone)")
     .eq("user_id", user.id)
     .maybeSingle();
   if (error) throw error;
@@ -37,6 +39,7 @@ export const getStaff = cache(async (): Promise<Staff | null> => {
     firmId: data.firm_id,
     role: data.role as Staff["role"],
     fullName: data.full_name,
+    timeZone: data.firms.time_zone,
   };
 });
 

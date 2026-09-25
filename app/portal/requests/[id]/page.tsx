@@ -29,7 +29,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
     .select(
       `id, title, status, due_date, clients(firms(name)),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note,
-         item_files(id, filename, size_bytes, created_at))`,
+         item_files(id, filename, size_bytes, created_at, by_staff))`,
     )
     .eq("id", id)
     .in("client_id", clientIds)
@@ -66,6 +66,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
         <ItemCard
           key={item.id}
           requestOpen={open}
+          firmName={request.clients?.firms?.name ?? "your firm"}
           item={{
             id: item.id,
             title: item.title,
@@ -75,7 +76,12 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
             status: item.status,
             textAnswer: item.text_answer,
             reviewNote: item.review_note,
-            files: item.item_files.map((f) => ({ id: f.id, filename: f.filename, sizeBytes: f.size_bytes })),
+            files: item.item_files.map((f) => ({
+              id: f.id,
+              filename: f.filename,
+              sizeBytes: f.size_bytes,
+              byStaff: f.by_staff,
+            })),
           }}
         />
       ))}

@@ -8,7 +8,7 @@ test("settings, team, templates, drafts, and open-request edits", async ({ brows
   // Settings: rename the firm; add staff, including an address that already belongs to a firm.
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("textbox", { name: "Firm name" }).fill("Smoke Firm LLP");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expectToast(page, "Firm name saved.");
   const bo = uniqueEmail("bo");
   await page.getByRole("button", { name: "Add staff" }).click();

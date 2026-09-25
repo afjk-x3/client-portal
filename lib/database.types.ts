@@ -155,23 +155,27 @@ export type Database = {
           id: string
           name: string
           plan: string
+          time_zone: string
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
           plan?: string
+          time_zone?: string
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
           plan?: string
+          time_zone?: string
         }
         Relationships: []
       }
       item_files: {
         Row: {
+          by_staff: boolean
           created_at: string
           filename: string
           firm_id: string
@@ -183,6 +187,7 @@ export type Database = {
           uploaded_by: string | null
         }
         Insert: {
+          by_staff?: boolean
           created_at?: string
           filename: string
           firm_id: string
@@ -194,6 +199,7 @@ export type Database = {
           uploaded_by?: string | null
         }
         Update: {
+          by_staff?: boolean
           created_at?: string
           filename?: string
           firm_id?: string
@@ -426,8 +432,9 @@ export type Database = {
       can_delete_document: { Args: { name: string }; Returns: boolean }
       can_read_document: { Args: { name: string }; Returns: boolean }
       can_write_document: { Args: { name: string }; Returns: boolean }
+      claim_reminder: { Args: { request_id: string }; Returns: boolean }
       create_firm: {
-        Args: { full_name: string; name: string }
+        Args: { full_name: string; name: string; time_zone?: string }
         Returns: string
       }
       is_client_contact: { Args: { client_id: string }; Returns: boolean }
@@ -456,6 +463,16 @@ export type Database = {
       }
       save_template: {
         Args: { items: Json; name: string; template_id: string }
+        Returns: undefined
+      }
+      send_requests: {
+        Args: {
+          client_ids: string[]
+          due_date: string
+          request_ids: string[]
+          template_id: string
+          title: string
+        }
         Returns: undefined
       }
       submit_item: {

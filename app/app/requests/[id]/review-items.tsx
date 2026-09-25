@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useId, useLayoutEffect, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useRef, useState } from "react";
+import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
@@ -11,9 +12,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
-import { formatDateTime } from "@/lib/dates";
+import { ACCEPT_ATTRIBUTE } from "@/lib/files";
 import type { ActionResult } from "@/lib/errors";
 import { submitKeepingValues } from "@/lib/forms";
+import { removeFile } from "@/app/portal/requests/[id]/actions";
+import { rejection, uploadFile } from "@/app/portal/requests/[id]/upload";
 import { acceptItem, removeItem, returnItem } from "../actions";
 
 export type ReviewItem = {
@@ -25,11 +28,14 @@ export type ReviewItem = {
   status: string;
   textAnswer: string | null;
   reviewNote: string | null;
-  submittedAt: string | null;
-  files: { id: string; filename: string; sizeBytes: number }[];
+  /** Formatted on the server in the firm's time zone. */
+  submitted: string | null;
+  /** byStaff: added by the firm; staff can remove only these. */
+  files: { id: string; filename: string; sizeBytes: number; byStaff: boolean }[];
 };
 
-export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable: boolean }) {
+/** `editable`: the request is open or completed. `open`: it is open, so staff can add files. */
+export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; editable: boolean; open: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open Sheet.
   useLayoutEffect(() => () => setOpenId(null), []);
@@ -66,17 +72,31 @@ export function ReviewItems({ items, editable }: { items: ReviewItem[]; editable
           </TableBody>
         </Table>
       </div>
-      <Sheet open={selected !== undefined} onOpenChange={(open) => !open && setOpenId(null)}>
+      <Sheet open={selected !== undefined} onOpenChange={(next) => !next && setOpenId(null)}>
         <SheetContent className="overflow-y-auto">
-          {selected && <ItemDetails item={selected} editable={editable} onRemoved={() => setOpenId(null)} />}
+          {selected && (
+            <ItemDetails item={selected} editable={editable} open={open} onRemoved={() => setOpenId(null)} />
+          )}
         </SheetContent>
       </Sheet>
     </>
   );
 }
 
-function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable: boolean; onRemoved: () => void }) {
+function ItemDetails({
+  item,
+  editable,
+  open,
+  onRemoved,
+}: {
+  item: ReviewItem;
+  editable: boolean;
+  open: boolean;
+  onRemoved: () => void;
+}) {
   const canAccept = editable && item.status !== "accepted";
+  // Staff add files for documents the client sent another way, until the item is accepted.
+  const canAddFiles = open && item.kind === "file" && item.status !== "accepted";
   const canReturn = editable && (item.status === "submitted" || item.status === "accepted");
   const canRemove = editable && item.status === "requested" && item.files.length === 0;
 
@@ -90,8 +110,8 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
       </SheetHeader>
       <div className="flex items-center gap-2">
         <ItemStatusBadge status={item.status} />
-        {item.submittedAt && (
-          <span className="text-sm text-muted-foreground">Submitted {formatDateTime(item.submittedAt)}</span>
+        {item.submitted && (
+          <span className="text-sm text-muted-foreground">Submitted {item.submitted}</span>
         )}
       </div>
       {item.description && <p className="whitespace-pre-wrap text-sm">{item.description}</p>}
@@ -107,17 +127,32 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
           {item.files.length === 0 && <p className="text-sm text-muted-foreground">No files yet.</p>}
           {item.files.map((file) => (
             <div key={file.id} className="flex items-center justify-between gap-2 text-sm">
-              <span className="truncate">{file.filename}</span>
-              <span className="flex shrink-0 gap-3">
+              <span className="truncate">
+                {file.filename}
+                {file.byStaff && <span className="text-muted-foreground"> · Added by staff</span>}
+              </span>
+              <span className="flex shrink-0 items-center gap-3">
                 <a className="underline" href={`/api/files/${file.id}`} target="_blank" rel="noopener noreferrer">
                   Open
                 </a>
                 <a className="underline" href={`/api/files/${file.id}?download=1`}>
                   Download
                 </a>
+                {canAddFiles && file.byStaff && (
+                  <ActionButton
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove ${file.filename}`}
+                    action={() => removeFile(file.id)}
+                    success="File removed."
+                  >
+                    Remove
+                  </ActionButton>
+                )}
               </span>
             </div>
           ))}
+          {canAddFiles && <AddFiles itemId={item.id} />}
         </div>
       )}
       {item.reviewNote && (
@@ -147,6 +182,45 @@ function ItemDetails({ item, editable, onRemoved }: { item: ReviewItem; editable
           </ActionButton>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Uploads files for the client, one at a time; the page refreshes as each is registered. */
+function AddFiles({ itemId }: { itemId: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function add(files: File[]) {
+    setBusy(true);
+    for (const file of files) {
+      const error = rejection(file) ?? (await uploadFile(itemId, file));
+      if (error) toast.error(error);
+      else toast.success(`${file.name} added.`);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <input
+        ref={input}
+        type="file"
+        multiple
+        accept={ACCEPT_ATTRIBUTE}
+        className="hidden"
+        aria-label="Add files"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          if (files.length > 0) void add(files);
+        }}
+      />
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => input.current?.click()}>
+        <Upload />
+        {busy ? "Uploading…" : "Add files"}
+      </Button>
+      <p className="text-xs text-muted-foreground">For documents the client sent another way. The client sees them too.</p>
     </div>
   );
 }

@@ -43,7 +43,7 @@ select is_empty($$ delete from storage.objects where name like '%/kept.pdf' retu
   'a contact cannot delete from an accepted item');
 select tests.login_as('00000000-0000-0000-0000-0000000000a2');
 select is_empty($$ delete from storage.objects where bucket_id = 'documents' returning 1 $$,
-  'staff cannot delete objects');
+  'staff cannot delete registered documents or uploads in closed items');
 
 -- File RPCs treat drafts as not found and refuse archived requests.
 reset role;

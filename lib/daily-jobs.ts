@@ -1,13 +1,13 @@
 import "server-only";
 import type { PostgrestResponse, SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { isOverdue, todayUtc } from "@/lib/dates";
+import { isOverdue, todayIn } from "@/lib/dates";
 import { EMAIL_BATCH_SIZE, emailConfigError, sendEmails, type EmailMessage } from "@/lib/email/send";
 import { reminderEmail, staffDigestEmail, type DigestGroup } from "@/lib/email/templates";
 import { reminderDue } from "@/lib/reminders";
 
 type Admin = SupabaseClient<Database>;
-type Firm = { id: string; name: string };
+type Firm = { id: string; name: string; time_zone: string };
 type Member = { user_id: string; email: string; created_at: string };
 /** The emails to send if this run wins today's (kind, target) claim. */
 type Notification = { kind: "reminder" | "staff_digest"; targetId: string; emails: EmailMessage[] };
@@ -63,7 +63,7 @@ async function reminders(admin: Admin, firm: Firm, members: Member[], today: str
   );
 
   return requests.flatMap((request): Notification[] => {
-    const sentOn = request.sent_at ? todayUtc(new Date(request.sent_at)) : today;
+    const sentOn = request.sent_at ? todayIn(firm.time_zone, new Date(request.sent_at)) : today;
     const contacts = request.clients.client_contacts;
     if (!reminderDue({ dueDate: request.due_date, sentOn, today }) || contacts.length === 0) return [];
 
@@ -177,8 +177,12 @@ async function claim(admin: Admin, notifications: Notification[], today: string,
   return notifications.filter((n) => won.has(`${n.kind}:${n.targetId}`));
 }
 
-/** A firm's reminders and digests, built in full before they are claimed so an error cannot use up today's claims. */
-async function claimFirm(admin: Admin, firm: Firm, today: string, now: Date): Promise<Notification[]> {
+/**
+ * A firm's reminders and digests, built in full before they are claimed so an
+ * error cannot use up today's claims. "Today" is the date in the firm's time zone.
+ */
+async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notification[]> {
+  const today = todayIn(firm.time_zone, now);
   const members = await readAll((last?: { user_id: string }) =>
     admin
       .from("firm_members")
@@ -195,16 +199,20 @@ async function claimFirm(admin: Admin, firm: Firm, today: string, now: Date): Pr
   return claim(admin, [...due, ...digest], today, now);
 }
 
-/** Reminders and staff digests for every firm. Each firm is isolated in its own try/catch. */
+/**
+ * Reminders and staff digests for every firm. Each firm is isolated in its own try/catch.
+ * ponytail: the job runs once a day at 13:00 UTC (vercel.json), so each firm gets
+ * its emails at a different local hour. Upgrade path: run hourly and send at a
+ * set local hour per firm.
+ */
 export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promise<DailySummary> {
   // Checked before any claim, so a missing key or sender cannot use up today's emails.
   const configError = emailConfigError();
   if (configError) throw new Error(`Daily jobs not run: ${configError}`);
 
-  const today = todayUtc(now);
   const summary: DailySummary = { firms: 0, failedFirms: 0, reminders: 0, digests: 0, sent: 0, failed: 0 };
   const firms = await readAll((last?: { id: string }) =>
-    admin.from("firms").select("id, name").gt("id", last?.id ?? NIL_UUID).order("id").limit(PAGE_SIZE),
+    admin.from("firms").select("id, name, time_zone").gt("id", last?.id ?? NIL_UUID).order("id").limit(PAGE_SIZE),
   );
 
   // Full batches go out while firms are still processed, so a run cut short loses little.
@@ -224,7 +232,7 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
     while (next < firms.length) {
       const firm = firms[next++];
       try {
-        for (const notification of await claimFirm(admin, firm, today, now)) {
+        for (const notification of await claimFirm(admin, firm, now)) {
           if (notification.kind === "reminder") summary.reminders++;
           else summary.digests++;
           queue.push(...notification.emails);

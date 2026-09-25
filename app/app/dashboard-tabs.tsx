@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
-import { formatDate, formatDateTime } from "@/lib/dates";
+import { formatDate } from "@/lib/dates";
 
 type WaitingRow = {
   requestId: string;
@@ -20,7 +20,8 @@ type ReadyRow = {
   client: string;
   request: string;
   item: string;
-  submittedAt: string;
+  /** Formatted on the server in the firm's time zone. */
+  submitted: string;
 };
 
 const waitingColumns: DataTableColumn<WaitingRow>[] = [
@@ -59,7 +60,7 @@ const readyColumns: DataTableColumn<ReadyRow>[] = [
     ),
   },
   { accessorKey: "item", header: "Item" },
-  { id: "submitted", header: "Submitted", cell: ({ row }) => formatDateTime(row.original.submittedAt) },
+  { accessorKey: "submitted", header: "Submitted" },
 ];
 
 export function DashboardTabs({ waiting, ready }: { waiting: WaitingRow[]; ready: ReadyRow[] }) {

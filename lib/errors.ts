@@ -8,6 +8,7 @@ type SupabaseError = { message: string; code?: string } | null | undefined;
 const MESSAGES: Record<string, string> = {
   not_allowed: "That isn't available to you. It may have been removed.",
   invalid_state: "This has changed since the page loaded. Refresh and try again.",
+  invalid_time_zone: "Pick a time zone from the list.",
 };
 
 /**

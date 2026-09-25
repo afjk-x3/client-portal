@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useId, useLayoutEffect, useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { BellRing, Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { DatePicker } from "@/components/date-picker";
@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { submitKeepingValues } from "@/lib/forms";
-import { addItem, setRequestArchived, updateRequestDetails } from "../actions";
+import { addItem, sendReminder, setRequestArchived, updateRequestDetails } from "../actions";
 
 /** Header actions for a sent request. */
 export function RequestActions({
@@ -30,11 +30,14 @@ export function RequestActions({
   title,
   dueDate,
   status,
+  canRemind,
 }: {
   requestId: string;
   title: string;
   dueDate: string;
   status: string;
+  /** Open, for an active client, with an item still to do. */
+  canRemind: boolean;
 }) {
   const archived = status === "archived";
 
@@ -42,6 +45,12 @@ export function RequestActions({
     <div className="flex flex-wrap gap-2">
       {!archived && <EditDetailsDialog requestId={requestId} title={title} dueDate={dueDate} />}
       {!archived && <AddItemDialog requestId={requestId} />}
+      {canRemind && (
+        <ActionButton variant="outline" action={() => sendReminder(requestId)} success="Reminder sent.">
+          <BellRing />
+          Send reminder
+        </ActionButton>
+      )}
       <Button variant="outline" asChild>
         <a href={`/api/requests/${requestId}/zip`} download>
           <Download />

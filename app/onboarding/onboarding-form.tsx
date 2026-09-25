@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,12 @@ import type { ActionResult } from "@/lib/errors";
 import { submitKeepingValues } from "@/lib/forms";
 import { createFirm } from "./actions";
 
+const subscribe = () => () => {};
+const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 export function OnboardingForm() {
+  // UTC while rendering on the server, then the browser's own zone.
+  const timeZone = useSyncExternalStore(subscribe, browserTimeZone, () => "UTC");
   const [, formAction, pending] = useActionState(async (prev: ActionResult | null, formData: FormData) => {
     const result = await createFirm(prev, formData);
     if (!result.ok) toast.error(result.error);
@@ -27,6 +32,10 @@ export function OnboardingForm() {
         <Label htmlFor="fullName">Your full name</Label>
         <Input id="fullName" name="fullName" maxLength={LIMITS.name} autoComplete="name" required />
       </div>
+      <input type="hidden" name="timeZone" value={timeZone} />
+      <p className="text-sm text-muted-foreground">
+        Due dates follow your time zone, {timeZone.replaceAll("_", " ")}. You can change it later in Settings.
+      </p>
       <Button type="submit" disabled={pending}>
         {pending ? "Creating…" : "Create firm"}
       </Button>

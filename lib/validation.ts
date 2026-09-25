@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { LIMITS, MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
+import { LIMITS, MAX_CLIENTS_PER_SEND, MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
+import { isTimeZone } from "@/lib/dates";
 
 const text = (label: string, max: number) =>
   z
@@ -16,6 +17,7 @@ export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
 export const filenameSchema = text("File name", LIMITS.filename);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 export const roleSchema = z.enum(["admin", "staff"]);
+export const timeZoneSchema = z.string().refine(isTimeZone, "Pick a time zone.");
 
 const idSchema = z.uuid();
 
@@ -27,6 +29,8 @@ export function isId(value: unknown): value is string {
 export const onboardingSchema = z.object({
   firmName: firmNameSchema,
   fullName: personNameSchema,
+  // Detected in the browser. One this server does not know falls back to UTC; admins can change it in Settings.
+  timeZone: timeZoneSchema.catch("UTC"),
 });
 
 export const clientSchema = z.object({
@@ -73,6 +77,17 @@ export const draftSchema = z.object({
 export const requestDetailsSchema = z.object({
   title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
+});
+
+export const bulkSendSchema = z.object({
+  templateId: z.uuid(),
+  title: text("Title", LIMITS.name),
+  dueDate: dueDateSchema,
+  clientIds: z
+    .array(z.uuid())
+    .min(1, "Pick at least one client.")
+    .max(MAX_CLIENTS_PER_SEND, `Pick at most ${MAX_CLIENTS_PER_SEND} clients at a time.`)
+    .transform((ids) => [...new Set(ids)]),
 });
 
 export const templateSchema = z.object({

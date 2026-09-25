@@ -1,5 +1,8 @@
 "use server";
 
+// File actions for contacts in the portal and for staff on the request page.
+// can_write_document, register_file, and remove_file decide what each may do.
+
 import { revalidatePath } from "next/cache";
 import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
@@ -10,6 +13,7 @@ import { filenameSchema, isId, textAnswerSchema } from "@/lib/validation";
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
   revalidatePath("/portal");
+  revalidatePath("/app/requests/[id]", "page");
 }
 
 /**

@@ -1,6 +1,6 @@
 -- storage.objects policies for the documents bucket.
 begin;
-select plan(14);
+select plan(15);
 \ir fixtures/seed.psql
 
 set local storage.allow_delete_query = 'true';
@@ -51,9 +51,12 @@ select results_eq($$ select name from storage.objects where bucket_id = 'documen
   $$ values ('f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/seed-a1.pdf'),
             ('f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a2/10000000-0000-0000-0000-0000000000a2/seed-a2.pdf') $$,
   'staff read only their own firm''s objects');
-select throws_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
+select lives_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
   'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a2/10000000-0000-0000-0000-0000000000a2/staff.pdf') $$,
-  '42501', null, 'staff cannot upload');
+  'staff can upload to an open file item of their firm');
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('documents',
+  'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/staff.pdf') $$,
+  '42501', null, 'but not once the request is closed');
 
 select * from finish();
 rollback;

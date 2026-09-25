@@ -8,7 +8,7 @@ import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { firmNameSchema, isId, roleSchema, staffSchema } from "@/lib/validation";
+import { firmNameSchema, isId, roleSchema, staffSchema, timeZoneSchema } from "@/lib/validation";
 
 export async function renameFirm(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireAdmin();
@@ -19,6 +19,25 @@ export async function renameFirm(_prev: ActionResult | null, formData: FormData)
   const { data, error } = await supabase
     .from("firms")
     .update({ name: name.data })
+    .eq("id", staff.firmId)
+    .select("id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!data) return fail(notFound);
+
+  revalidatePath("/app", "layout");
+  return { ok: true };
+}
+
+export async function setTimeZone(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const staff = await requireAdmin();
+  const timeZone = timeZoneSchema.safeParse(formData.get("timeZone"));
+  if (!timeZone.success) return invalid(timeZone.error);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("firms")
+    .update({ time_zone: timeZone.data })
     .eq("id", staff.firmId)
     .select("id")
     .maybeSingle();

@@ -2,6 +2,8 @@ export const APP_NAME = "Client Portal";
 
 export const MAX_ITEMS_PER_REQUEST = 100;
 export const MAX_FILES_PER_ITEM = 20;
+/** Clients one bulk send can reach, so its requests and emails fit in one call. */
+export const MAX_CLIENTS_PER_SEND = 100;
 
 /**
  * Text limits in characters. The database check constraints in

@@ -1,5 +1,8 @@
 import { Suspense } from "react";
+import Link from "next/link";
+import { Send } from "lucide-react";
 import { notFound } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
 import { newEditorItem } from "@/lib/editor-items";
@@ -35,9 +38,19 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
   if (!template) notFound();
 
   return (
-    <TemplateEditor
-      templateId={template.id}
-      initial={{ name: template.name, items: template.template_items.map((item) => newEditorItem(item)) }}
-    />
+    <>
+      <div>
+        <Button variant="outline" asChild>
+          <Link href={`/app/templates/${template.id}/send`}>
+            <Send />
+            Send to clients
+          </Link>
+        </Button>
+      </div>
+      <TemplateEditor
+        templateId={template.id}
+        initial={{ name: template.name, items: template.template_items.map((item) => newEditorItem(item)) }}
+      />
+    </>
   );
 }

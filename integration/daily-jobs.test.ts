@@ -32,6 +32,7 @@ const users: Record<string, { id: string; email: string }> = {};
 const requestIds: Record<string, string> = {};
 let firm = "";
 let bulkFirm = "";
+let aucklandFirm = "";
 
 async function rows<T>(query: PromiseLike<{ data: T; error: null } | { data: null; error: PostgrestError }>): Promise<T> {
   const { data, error } = await query;
@@ -42,14 +43,32 @@ async function rows<T>(query: PromiseLike<{ data: T; error: null } | { data: nul
 const inbox = (name: string) => outbox.filter((m) => m.to === users[name].email);
 
 beforeAll(async () => {
-  for (const name of ["staffA", "staffB", "staffC", "former", "contact1", "contact2", "archivedContact", "bulkStaff", "bulkContact"]) {
+  for (const name of [
+    "staffA",
+    "staffB",
+    "staffC",
+    "former",
+    "contact1",
+    "contact2",
+    "archivedContact",
+    "bulkStaff",
+    "bulkContact",
+    "aucklandContact",
+  ]) {
     const email = `daily-${name}-${tag}@example.com`;
     const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
     if (error) throw error;
     users[name] = { id: data.user.id, email };
   }
-  [{ id: firm }, { id: bulkFirm }] = await rows(
-    admin.from("firms").insert([{ name: `Daily ${tag}` }, { name: `Daily bulk ${tag}` }]).select("id"),
+  [{ id: firm }, { id: bulkFirm }, { id: aucklandFirm }] = await rows(
+    admin
+      .from("firms")
+      .insert([
+        { name: `Daily ${tag}`, time_zone: "UTC" },
+        { name: `Daily bulk ${tag}`, time_zone: "UTC" },
+        { name: `Daily Auckland ${tag}`, time_zone: "Pacific/Auckland" },
+      ])
+      .select("id"),
   );
   const member = (firmId: string, name: string, role: string) => ({
     firm_id: firmId,
@@ -63,13 +82,14 @@ beforeAll(async () => {
       .from("firm_members")
       .insert([member(firm, "staffA", "admin"), member(firm, "staffB", "staff"), member(bulkFirm, "bulkStaff", "admin")]),
   );
-  const [{ id: client }, { id: archivedClient }, { id: bulkClient }] = await rows(
+  const [{ id: client }, { id: archivedClient }, { id: bulkClient }, { id: aucklandClient }] = await rows(
     admin
       .from("clients")
       .insert([
-        { firm_id: firm, name: "Active" },
+        { firm_id: firm, name: "Active", archived_at: null },
         { firm_id: firm, name: "Archived", archived_at: at(-100) },
-        { firm_id: bulkFirm, name: "Bulk" },
+        { firm_id: bulkFirm, name: "Bulk", archived_at: null },
+        { firm_id: aucklandFirm, name: "Auckland", archived_at: null },
       ])
       .select("id"),
   );
@@ -88,7 +108,23 @@ beforeAll(async () => {
         contact(client, firm, "contact2"),
         contact(archivedClient, firm, "archivedContact"),
         contact(bulkClient, bulkFirm, "bulkContact"),
+        contact(aucklandClient, aucklandFirm, "aucklandContact"),
       ]),
+  );
+
+  // At the first run (13:00 UTC on March 10) it is already March 11 in Auckland,
+  // so a request due March 18 is 7 days out there, and 8 in UTC.
+  const [{ id: aucklandRequest }] = await rows(
+    admin
+      .from("requests")
+      .insert({ firm_id: aucklandFirm, client_id: aucklandClient, title: "auckland7", due_date: day(8), status: "open", sent_at: at(-48) })
+      .select("id"),
+  );
+  requestIds.auckland7 = aucklandRequest;
+  await rows(
+    admin
+      .from("request_items")
+      .insert({ request_id: aucklandRequest, firm_id: aucklandFirm, position: 1, title: "Passport", kind: "file", status: "requested" }),
   );
 
   // Sent two days ago unless noted; only due7 and overdue3 have a reminder day on day 0.
@@ -172,7 +208,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  for (const firmId of [firm, bulkFirm].filter(Boolean)) {
+  for (const firmId of [firm, bulkFirm, aucklandFirm].filter(Boolean)) {
     await rows(admin.from("clients").delete().eq("firm_id", firmId));
     await rows(admin.from("firms").delete().eq("id", firmId));
   }
@@ -204,6 +240,13 @@ it("sends each due reminder and digest once, past PostgREST's row limit", async 
     expect(digest.text).toContain("Receipts");
     expect(digest.text).not.toContain("Old upload"); // no earlier digest, so the window is 24 hours
   }
+
+  // Reminder days and claims follow each firm's own calendar.
+  expect(inbox("aucklandContact").map((m) => m.subject)).toEqual([expect.stringMatching(/^Reminder: auckland7 is due/)]);
+  const [aucklandClaim] = await rows(
+    admin.from("notifications_sent").select("sent_on").eq("target_id", requestIds.auckland7),
+  );
+  expect(aucklandClaim.sent_on).toBe(day(1));
 
   expect(inbox("bulkContact")).toHaveLength(1001);
   expect(inbox("bulkStaff").map((m) => m.subject)).toEqual([`1001 items submitted at Daily bulk ${tag}`]);

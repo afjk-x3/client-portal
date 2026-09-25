@@ -10,10 +10,10 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Textarea } from "@/components/ui/textarea";
 import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
-import { ACCEPT_ATTRIBUTE, MAX_FILE_BYTES, uploadMimeType } from "@/lib/files";
+import { ACCEPT_ATTRIBUTE } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
-import { createClient } from "@/lib/supabase/client";
-import { createUploadUrl, registerFile, removeFile, submitItem } from "./actions";
+import { removeFile, submitItem } from "./actions";
+import { rejection, uploadFile } from "./upload";
 
 export type PortalItem = {
   id: string;
@@ -24,10 +24,11 @@ export type PortalItem = {
   status: string;
   textAnswer: string | null;
   reviewNote: string | null;
-  files: { id: string; filename: string; sizeBytes: number }[];
+  /** byStaff: added by the firm, so the contact cannot remove it. */
+  files: { id: string; filename: string; sizeBytes: number; byStaff: boolean }[];
 };
 
-export function ItemCard({ item, requestOpen }: { item: PortalItem; requestOpen: boolean }) {
+export function ItemCard({ item, requestOpen, firmName }: { item: PortalItem; requestOpen: boolean; firmName: string }) {
   // ponytail: optional items lock when a request completes. Upgrade path: allow
   // optional submissions on completed requests.
   const editable = requestOpen && (item.status === "requested" || item.status === "needs_changes");
@@ -50,7 +51,7 @@ export function ItemCard({ item, requestOpen }: { item: PortalItem; requestOpen:
           </Alert>
         )}
         {item.kind === "file" ? (
-          <FileItem item={item} editable={editable} />
+          <FileItem item={item} editable={editable} firmName={firmName} />
         ) : (
           <TextItem item={item} editable={editable} />
         )}
@@ -65,38 +66,7 @@ function formatSize(bytes: number) {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Why a file can never be uploaded (so retrying cannot help), or null. */
-function rejection(file: File): string | null {
-  if (!uploadMimeType(file)) return `${file.name}: this file type is not accepted.`;
-  if (file.size > MAX_FILE_BYTES) return `${file.name}: files must be 25 MB or smaller.`;
-  return null;
-}
-
-/**
- * Section 10.5: create a signed URL, upload straight to Storage, then register
- * the file. Returns an error message, or null when the file is registered.
- */
-async function uploadOne(itemId: string, file: File): Promise<string | null> {
-  const type = uploadMimeType(file)!;
-  const created = await createUploadUrl(itemId, file.name);
-  if (!created.ok) return created.error;
-  const { path, token } = created.data!;
-
-  const storage = createClient().storage.from("documents");
-  const body = type === file.type ? file : new File([file], file.name, { type });
-  const { error } = await storage.uploadToSignedUrl(path, token, body, { contentType: type });
-  if (error) return "Upload failed. Check your connection and retry.";
-
-  const registered = await registerFile(itemId, path, file.name);
-  if (registered.ok) return null;
-  // The object is not registered, so the contact may still delete it; a retry uploads it again.
-  // ponytail: the object is orphaned if this delete fails too. Upgrade path: a nightly
-  // cleanup of objects that have no item_files row.
-  await storage.remove([path]);
-  return registered.error;
-}
-
-function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
+function FileItem({ item, editable, firmName }: { item: PortalItem; editable: boolean; firmName: string }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -126,7 +96,7 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
       update(upload.key, { status: "uploading", error: undefined });
       let error: string | null;
       try {
-        error = await uploadOne(item.id, upload.file);
+        error = await uploadFile(item.id, upload.file);
       } catch {
         // A dropped connection or a new deployment makes the action call throw.
         error = "Upload failed. Check your connection and retry.";
@@ -169,12 +139,13 @@ function FileItem({ item, editable }: { item: PortalItem; editable: boolean }) {
             <li key={file.id} className="flex items-center justify-between gap-2 text-sm">
               <span className="truncate">
                 {file.filename} <span className="text-muted-foreground">({formatSize(file.sizeBytes)})</span>
+                {file.byStaff && <span className="text-muted-foreground"> · Added by {firmName}</span>}
               </span>
               <span className="flex shrink-0 items-center gap-2">
                 <a className="underline" href={`/api/files/${file.id}?download=1`} aria-label={`Download ${file.filename}`}>
                   Download
                 </a>
-                {editable && (
+                {editable && !file.byStaff && (
                   <ActionButton
                     variant="ghost"
                     size="sm"

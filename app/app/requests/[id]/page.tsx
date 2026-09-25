@@ -28,9 +28,9 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   const { data: request, error } = await supabase
     .from("requests")
     .select(
-      `id, title, status, due_date, sent_at, client_id, clients(name),
+      `id, title, status, due_date, sent_at, client_id, clients(name, archived_at),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note, submitted_at,
-         item_files(id, filename, size_bytes, created_at))`,
+         item_files(id, filename, size_bytes, created_at, by_staff))`,
     )
     .eq("id", id)
     .eq("firm_id", staff.firmId)
@@ -78,7 +78,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           </h1>
           <p className="text-sm text-muted-foreground">
             For {clientLink} · Due {formatDate(request.due_date)}
-            {request.sent_at && ` · Sent ${formatDateTime(request.sent_at)}`}
+            {request.sent_at && ` · Sent ${formatDateTime(request.sent_at, staff.timeZone)}`}
           </p>
         </div>
         <RequestActions
@@ -86,10 +86,16 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           title={request.title}
           dueDate={request.due_date}
           status={request.status}
+          canRemind={
+            request.status === "open" &&
+            !request.clients?.archived_at &&
+            request.request_items.some((item) => item.status === "requested" || item.status === "needs_changes")
+          }
         />
       </div>
       <ReviewItems
         editable={request.status === "open" || request.status === "completed"}
+        open={request.status === "open"}
         items={request.request_items.map((item) => ({
           id: item.id,
           title: item.title,
@@ -99,8 +105,13 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           status: item.status,
           textAnswer: item.text_answer,
           reviewNote: item.review_note,
-          submittedAt: item.submitted_at,
-          files: item.item_files.map((file) => ({ id: file.id, filename: file.filename, sizeBytes: file.size_bytes })),
+          submitted: item.submitted_at ? formatDateTime(item.submitted_at, staff.timeZone) : null,
+          files: item.item_files.map((file) => ({
+            id: file.id,
+            filename: file.filename,
+            sizeBytes: file.size_bytes,
+            byStaff: file.by_staff,
+          })),
         }))}
       />
     </>

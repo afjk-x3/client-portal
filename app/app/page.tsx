@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
-import { isOverdue, todayUtc } from "@/lib/dates";
+import { formatDateTime, isOverdue, todayIn } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardTabs } from "./dashboard-tabs";
 
@@ -40,7 +40,7 @@ async function Dashboard() {
   if (waiting.error) throw waiting.error;
   if (ready.error) throw ready.error;
 
-  const today = todayUtc();
+  const today = todayIn(staff.timeZone);
   return (
     <DashboardTabs
       waiting={waiting.data.map((request) => ({
@@ -56,7 +56,7 @@ async function Dashboard() {
         client: item.requests.clients?.name ?? "",
         request: item.requests.title,
         item: item.title,
-        submittedAt: item.submitted_at ?? "",
+        submitted: item.submitted_at ? formatDateTime(item.submitted_at, staff.timeZone) : "",
       }))}
     />
   );

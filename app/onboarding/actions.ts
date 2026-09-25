@@ -13,6 +13,7 @@ export async function createFirm(_prev: ActionResult | null, formData: FormData)
   const { error } = await supabase.rpc("create_firm", {
     name: parsed.data.firmName,
     full_name: parsed.data.fullName,
+    time_zone: parsed.data.timeZone,
   });
   if (error) return fail(error, { P0001: "You already belong to a firm." });
 
