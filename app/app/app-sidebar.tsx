@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
+import { FileText, Inbox, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -19,6 +19,7 @@ import {
 const NAV = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/clients", label: "Clients", icon: Users },
+  { href: "/app/requests", label: "Requests", icon: Inbox },
   { href: "/app/templates", label: "Templates", icon: FileText },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];

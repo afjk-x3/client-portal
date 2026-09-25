@@ -49,3 +49,14 @@ export async function fillRequest(page: Page, title: string, item: string) {
   await page.getByRole("button", { name: "Add item" }).click();
   await page.getByRole("textbox", { name: "Item 1 title" }).fill(item);
 }
+
+/** Creates a client with one contact of the same name and ends on the client's page. */
+export async function addClientWithContact(page: Page, name: string, email: string) {
+  await addClient(page, name);
+  await page.getByRole("button", { name: "Add contact" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Full name" }).fill(name);
+  await dialog.getByRole("textbox", { name: "Email" }).fill(email);
+  await dialog.getByRole("button", { name: "Add contact" }).click();
+  await expect(page.getByRole("cell", { name: email })).toBeVisible();
+}

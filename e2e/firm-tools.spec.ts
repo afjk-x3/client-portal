@@ -1,17 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
-import { addClient, expectToast, signIn, signUpWithFirm, uniqueEmail } from "./helpers";
+import { expect, test } from "@playwright/test";
+import { addClientWithContact, expectToast, signIn, signUpWithFirm, uniqueEmail } from "./helpers";
 
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
-
-async function addClientWithContact(page: Page, name: string, email: string) {
-  await addClient(page, name);
-  await page.getByRole("button", { name: "Add contact" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Full name" }).fill(name);
-  await dialog.getByRole("textbox", { name: "Email" }).fill(email);
-  await dialog.getByRole("button", { name: "Add contact" }).click();
-  await expect(page.getByRole("cell", { name: email })).toBeVisible();
-}
 
 test("time zones, sending to many clients, reminders now, and staff uploads", async ({ browser }) => {
   // The firm's time zone comes from the browser at signup, and admins can change it.
