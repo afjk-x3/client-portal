@@ -1,7 +1,7 @@
 -- Firm time zones: set at signup, changed by admins only, and always a name
 -- Postgres knows.
 begin;
-select plan(8);
+select plan(10);
 \ir fixtures/seed.psql
 
 select is((select time_zone from public.firms where id = 'f0000000-0000-0000-0000-00000000000a'),
@@ -10,6 +10,8 @@ select is((select time_zone from public.firms where id = 'f0000000-0000-0000-000
 select tests.login_as('00000000-0000-0000-0000-0000000000d1', 'nobody@test.local');
 select throws_ok($$ select public.create_firm('Nowhere', 'Nobody', 'Mars/Olympus_Mons') $$,
   'P0001', 'invalid_time_zone', 'create_firm rejects an unknown time zone');
+select throws_ok($$ select public.create_firm('Nowhere', 'Nobody', 'Factory') $$,
+  'P0001', 'invalid_time_zone', 'and Postgres-only names the app cannot format');
 create temp table manila on commit drop as
 select public.create_firm('Manila Firm', 'Nobody', 'Asia/Manila') as id;
 select is((select time_zone from public.firms where id = (select id from manila)),
@@ -22,6 +24,9 @@ select isnt_empty($$ update public.firms set time_zone = 'America/New_York'
 select throws_ok($$ update public.firms set time_zone = 'EST-ish'
   where id = 'f0000000-0000-0000-0000-00000000000a' $$,
   'P0001', 'invalid_time_zone', 'but not to an unknown one');
+select throws_ok($$ update public.firms set time_zone = 'posix/Asia/Tokyo'
+  where id = 'f0000000-0000-0000-0000-00000000000a' $$,
+  'P0001', 'invalid_time_zone', 'nor to a posix/ copy of a real one');
 
 select tests.login_as('00000000-0000-0000-0000-0000000000a2', 'staff-a@test.local');
 select is_empty($$ update public.firms set time_zone = 'Europe/Paris'

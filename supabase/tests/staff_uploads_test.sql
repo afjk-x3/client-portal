@@ -1,7 +1,7 @@
 -- Staff upload files for a client: file items of their firm's open requests
 -- that are not accepted yet. Each side removes only its own files.
 begin;
-select plan(16);
+select plan(18);
 \ir fixtures/seed.psql
 
 set local storage.allow_delete_query = 'true';
@@ -12,15 +12,20 @@ insert into p values (
   'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/',
   'f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a1/');
 grant select on p to authenticated;
-insert into storage.objects (bucket_id, name, metadata)
-select 'documents', a4 || name, '{"size": 10, "mimetype": "application/pdf"}'
-from p, (values ('staff.pdf'), ('client.pdf')) as f(name);
+-- Storage records the uploader as owner_id.
+insert into storage.objects (bucket_id, name, metadata, owner_id)
+select 'documents', a4 || f.name, '{"size": 10, "mimetype": "application/pdf"}', f.owner
+from p, (values ('staff.pdf', '00000000-0000-0000-0000-0000000000a2'),
+                ('firm-only.pdf', '00000000-0000-0000-0000-0000000000a2'),
+                ('client.pdf', '00000000-0000-0000-0000-0000000000c1')) as f(name, owner);
 
 select tests.login_as('00000000-0000-0000-0000-0000000000a2', 'staff-a@test.local');
 select lives_ok($$ insert into storage.objects (bucket_id, name) values ('documents', (select a4 from p) || 'upload.pdf') $$,
   'staff can upload to an open file item of their firm');
 select isnt_empty($$ delete from storage.objects where name = (select a4 from p) || 'upload.pdf' returning 1 $$,
   'and delete that upload while it is not registered');
+select throws_ok($$ select public.register_file('10000000-0000-0000-0000-0000000000a4', (select a4 from p) || 'client.pdf', 'x.pdf') $$,
+  'P0001', 'not_allowed', 'staff cannot register the client''s upload as the firm''s');
 create temp table staff_file on commit drop as
 select public.register_file('10000000-0000-0000-0000-0000000000a4', (select a4 from p) || 'staff.pdf', 'Scan.pdf') as id;
 select is((select by_staff from public.item_files where id = (select id from staff_file)), true,
@@ -43,6 +48,8 @@ create temp table client_file on commit drop as
 select public.register_file('10000000-0000-0000-0000-0000000000a4', (select a4 from p) || 'client.pdf', 'Mine.pdf') as id;
 select is((select by_staff from public.item_files where id = (select id from client_file)), false,
   'a file a contact registers is the client''s');
+select throws_ok($$ select public.register_file('10000000-0000-0000-0000-0000000000a4', (select a4 from p) || 'firm-only.pdf', 'x.pdf') $$,
+  'P0001', 'not_allowed', 'a contact cannot register the firm''s upload as the client''s');
 select throws_ok($$ select public.remove_file((select id from staff_file)) $$,
   'P0001', 'not_allowed', 'a contact cannot remove the firm''s file');
 
@@ -56,8 +63,9 @@ select is(public.remove_file((select id from staff_file)), (select a4 from p) ||
 reset role;
 update public.request_items set status = 'submitted' where id = '10000000-0000-0000-0000-0000000000a1';
 select tests.login_as('00000000-0000-0000-0000-0000000000a2', 'staff-a@test.local');
-select lives_ok($$ insert into storage.objects (bucket_id, name, metadata)
-  values ('documents', (select a1 from p) || 'late.pdf', '{"size": 10, "mimetype": "application/pdf"}') $$,
+select lives_ok($$ insert into storage.objects (bucket_id, name, metadata, owner_id)
+  values ('documents', (select a1 from p) || 'late.pdf', '{"size": 10, "mimetype": "application/pdf"}',
+          '00000000-0000-0000-0000-0000000000a2') $$,
   'staff can add to a submitted item');
 select lives_ok($$ select public.register_file('10000000-0000-0000-0000-0000000000a1', (select a1 from p) || 'late.pdf', 'Late.pdf') $$,
   'and register it');

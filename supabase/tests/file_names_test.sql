@@ -7,8 +7,9 @@ select plan(5);
 create temp table a4 (prefix text) on commit drop;
 insert into a4 values ('f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/');
 grant select on a4 to authenticated;
-insert into storage.objects (bucket_id, name, metadata)
-select 'documents', a4.prefix || v.n || '.bin', jsonb_build_object('size', 1, 'mimetype', v.mime)
+insert into storage.objects (bucket_id, name, metadata, owner_id)
+select 'documents', a4.prefix || v.n || '.bin', jsonb_build_object('size', 1, 'mimetype', v.mime),
+       '00000000-0000-0000-0000-0000000000c1'
 from a4, (values ('1', 'application/pdf'), ('2', 'application/pdf'), ('3', 'application/pdf'),
                  ('4', 'image/jpeg'), ('5', 'image/jpeg')) as v(n, mime);
 

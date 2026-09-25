@@ -1,5 +1,5 @@
 -- register_file and remove_file as contact c1. Uploads are simulated by
--- inserting storage.objects rows as postgres.
+-- inserting storage.objects rows as postgres, owned by c1 as Storage would record.
 begin;
 select plan(13);
 \ir fixtures/seed.psql
@@ -9,8 +9,9 @@ create temp table a4 (prefix text) on commit drop;
 insert into a4 values ('f0000000-0000-0000-0000-00000000000a/c0000000-0000-0000-0000-0000000000a1/10000000-0000-0000-0000-0000000000a4/');
 grant select on a4 to authenticated;
 
-insert into storage.objects (bucket_id, name, metadata)
-select 'documents', prefix || 'w2.pdf', '{"size": 2048, "mimetype": "application/pdf"}' from a4;
+insert into storage.objects (bucket_id, name, metadata, owner_id)
+select 'documents', prefix || 'w2.pdf', '{"size": 2048, "mimetype": "application/pdf"}', '00000000-0000-0000-0000-0000000000c1'
+from a4;
 
 select tests.login_as('00000000-0000-0000-0000-0000000000c1');
 
@@ -41,8 +42,9 @@ select results_eq(
 
 -- Fill the item up to 20 files, then the 21st is rejected.
 reset role;
-insert into storage.objects (bucket_id, name, metadata)
-select 'documents', prefix || 'bulk-' || n || '.pdf', '{"size": 1, "mimetype": "application/pdf"}'
+insert into storage.objects (bucket_id, name, metadata, owner_id)
+select 'documents', prefix || 'bulk-' || n || '.pdf', '{"size": 1, "mimetype": "application/pdf"}',
+       '00000000-0000-0000-0000-0000000000c1'
 from a4, generate_series(1, 20) n;
 select tests.login_as('00000000-0000-0000-0000-0000000000c1');
 select lives_ok(

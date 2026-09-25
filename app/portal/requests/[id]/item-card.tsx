@@ -94,13 +94,7 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
   function enqueue(upload: Upload) {
     async function run() {
       update(upload.key, { status: "uploading", error: undefined });
-      let error: string | null;
-      try {
-        error = await uploadFile(item.id, upload.file);
-      } catch {
-        // A dropped connection or a new deployment makes the action call throw.
-        error = "Upload failed. Check your connection and retry.";
-      }
+      const error = await uploadFile(item.id, upload.file);
       update(upload.key, error ? { status: "failed", error } : null);
     }
     queue.current = queue.current.then(run, run);
