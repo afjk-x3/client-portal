@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { formatDate } from "@/lib/dates";
@@ -64,18 +66,34 @@ const readyColumns: DataTableColumn<ReadyRow>[] = [
 ];
 
 export function DashboardTabs({ waiting, ready }: { waiting: WaitingRow[]; ready: ReadyRow[] }) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const hit = (...fields: string[]) => needle === "" || fields.some((field) => field.toLowerCase().includes(needle));
+  const shownWaiting = waiting.filter((row) => hit(row.client, row.title));
+  const shownReady = ready.filter((row) => hit(row.client, row.request, row.item));
+
   return (
-    <Tabs defaultValue="waiting">
-      <TabsList>
-        <TabsTrigger value="waiting">Waiting on clients ({waiting.length})</TabsTrigger>
-        <TabsTrigger value="ready">Ready for review ({ready.length})</TabsTrigger>
-      </TabsList>
-      <TabsContent value="waiting">
-        <DataTable columns={waitingColumns} data={waiting} emptyMessage="No client is holding up a request." />
-      </TabsContent>
-      <TabsContent value="ready">
-        <DataTable columns={readyColumns} data={ready} emptyMessage="Nothing to review." />
-      </TabsContent>
-    </Tabs>
+    <div className="flex flex-col gap-4">
+      <Input
+        type="search"
+        aria-label="Search the dashboard"
+        placeholder="Search clients, requests, and items"
+        className="max-w-sm"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <Tabs defaultValue="waiting">
+        <TabsList>
+          <TabsTrigger value="waiting">Waiting on clients ({shownWaiting.length})</TabsTrigger>
+          <TabsTrigger value="ready">Ready for review ({shownReady.length})</TabsTrigger>
+        </TabsList>
+        <TabsContent value="waiting">
+          <DataTable columns={waitingColumns} data={shownWaiting} emptyMessage="No client is holding up a request." />
+        </TabsContent>
+        <TabsContent value="ready">
+          <DataTable columns={readyColumns} data={shownReady} emptyMessage="Nothing to review." />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

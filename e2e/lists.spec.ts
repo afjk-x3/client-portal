@@ -18,6 +18,11 @@ test("the Requests page searches, filters, and keeps its state in the URL", asyn
   await page.getByRole("button", { name: "Send to 2 clients" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Send" }).click();
   await expectToast(page, "Sent to 2 clients.");
+  // The dashboard's search filters both tabs and their counts.
+  await expect(page.getByRole("tab", { name: "Waiting on clients (2)" })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search the dashboard" }).fill("nora");
+  await expect(page.getByRole("tab", { name: "Waiting on clients (1)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Annual tax return (starter)" })).toHaveCount(1);
   await page.getByRole("link", { name: "Clients", exact: true }).click();
   await page.getByRole("link", { name: "Nora North" }).click();
   await page.getByRole("link", { name: "New request" }).click();
