@@ -441,6 +441,41 @@ export type Database = {
       is_firm_admin: { Args: { firm_id: string }; Returns: boolean }
       is_firm_contact: { Args: { firm_id: string }; Returns: boolean }
       is_firm_member: { Args: { firm_id: string }; Returns: boolean }
+      list_clients: {
+        Args: {
+          include_archived?: boolean
+          kind?: string
+          owner?: string
+          page?: number
+          q?: string
+        }
+        Returns: {
+          archived: boolean
+          id: string
+          kind: string
+          name: string
+          owner_id: string
+          total: number
+        }[]
+      }
+      list_requests: {
+        Args: {
+          overdue_only?: boolean
+          page?: number
+          q?: string
+          statuses?: string[]
+        }
+        Returns: {
+          client_id: string
+          client_name: string
+          due_date: string
+          id: string
+          open_items: number
+          status: string
+          title: string
+          total: number
+        }[]
+      }
       refresh_request_status: {
         Args: { request_id: string }
         Returns: undefined
