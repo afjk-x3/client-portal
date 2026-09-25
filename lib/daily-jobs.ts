@@ -1,10 +1,11 @@
 import "server-only";
-import type { PostgrestResponse, SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { isOverdue, todayIn } from "@/lib/dates";
 import { EMAIL_BATCH_SIZE, emailConfigError, sendEmails, type EmailMessage } from "@/lib/email/send";
 import { reminderEmail, staffDigestEmail, type DigestGroup } from "@/lib/email/templates";
 import { reminderDue } from "@/lib/reminders";
+import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
 
 type Admin = SupabaseClient<Database>;
 type Firm = { id: string; name: string; time_zone: string };
@@ -21,28 +22,8 @@ export type DailySummary = {
   failed: number;
 };
 
-// PostgREST cuts responses off at max_rows (1000 by default) without an error. A page larger
-// than max_rows would come back short and end the read early (see the README).
-const PAGE_SIZE = 1000;
 const FIRM_CONCURRENCY = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const NIL_UUID = "00000000-0000-0000-0000-000000000000"; // sorts before every generated id
-
-/**
- * Every row of a query, a page at a time. Each page starts after the previous
- * page's last row (keyset paging), so rows that change during the read cannot
- * shift others into a second page or out of both. Callers type `last` with the
- * key columns they page by.
- */
-async function readAll<Row>(page: (last: Row | undefined) => PromiseLike<PostgrestResponse<Row>>): Promise<Row[]> {
-  const rows: Row[] = [];
-  for (;;) {
-    const { data, error } = await page(rows.at(-1));
-    if (error) throw error;
-    rows.push(...data);
-    if (data.length < PAGE_SIZE) return rows;
-  }
-}
 
 /** Open requests of active clients that have open items and a reminder day today. */
 async function reminders(admin: Admin, firm: Firm, members: Member[], today: string): Promise<Notification[]> {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
+import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
 import { SendToClientsForm } from "./send-to-clients-form";
@@ -22,17 +23,21 @@ async function SendTemplate({ params }: Pick<PageProps<"/app/templates/[id]/send
   const supabase = await createClient();
   const [template, clients] = await Promise.all([
     supabase.from("templates").select("id, name").eq("id", id).eq("firm_id", staff.firmId).maybeSingle(),
-    // Active clients with at least one contact to email; the inner join drops the rest.
-    supabase
-      .from("clients")
-      .select("id, name, client_contacts!inner(user_id)")
-      .eq("firm_id", staff.firmId)
-      .is("archived_at", null)
-      .order("name"),
+    // Every active client with at least one contact to email; the inner join drops the rest.
+    readAll((last?: { id: string }) =>
+      supabase
+        .from("clients")
+        .select("id, name, client_contacts!inner(user_id)")
+        .eq("firm_id", staff.firmId)
+        .is("archived_at", null)
+        .gt("id", last?.id ?? NIL_UUID)
+        .order("id")
+        .limit(PAGE_SIZE),
+    ),
   ]);
   if (template.error) throw template.error;
-  if (clients.error) throw clients.error;
   if (!template.data) notFound();
+  clients.sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <>
@@ -51,7 +56,7 @@ async function SendTemplate({ params }: Pick<PageProps<"/app/templates/[id]/send
         key={template.data.id}
         templateId={template.data.id}
         defaultTitle={template.data.name}
-        clients={clients.data.map((client) => ({
+        clients={clients.map((client) => ({
           id: client.id,
           name: client.name,
           contacts: client.client_contacts.length,
