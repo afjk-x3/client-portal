@@ -244,6 +244,47 @@ export type Database = {
         }
         Relationships: []
       }
+      request_events: {
+        Row: {
+          actor_id: string | null
+          created_at: string
+          detail: Json
+          firm_id: string
+          id: number
+          item_id: string | null
+          kind: string
+          request_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          created_at?: string
+          detail?: Json
+          firm_id: string
+          id?: never
+          item_id?: string | null
+          kind: string
+          request_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          created_at?: string
+          detail?: Json
+          firm_id?: string
+          id?: never
+          item_id?: string | null
+          kind?: string
+          request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "request_events_request_id_firm_id_fkey"
+            columns: ["request_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "requests"
+            referencedColumns: ["id", "firm_id"]
+          },
+        ]
+      }
       request_items: {
         Row: {
           created_at: string
@@ -475,6 +516,15 @@ export type Database = {
           title: string
           total: number
         }[]
+      }
+      log_request_event: {
+        Args: {
+          detail?: Json
+          item_id: string
+          kind: string
+          request_id: string
+        }
+        Returns: undefined
       }
       refresh_request_status: {
         Args: { request_id: string }
