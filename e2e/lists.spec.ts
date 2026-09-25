@@ -51,3 +51,35 @@ test("the Requests page searches, filters, and keeps its state in the URL", asyn
   await page.getByRole("link", { name: "Back to page 1" }).click();
   await expect(page.getByText("Showing 1–3 of 3")).toBeVisible();
 });
+
+test("the client list searches contacts and filters by type, owner, and archived", async ({ page }) => {
+  await signUpWithFirm(page, uniqueEmail("clients"), "Client Firm", "Cleo Staff");
+  const hidden = uniqueEmail("hidden-contact");
+  await addClientWithContact(page, "Avery Home", hidden);
+  await page.getByRole("link", { name: "Clients", exact: true }).click();
+  await page.getByRole("button", { name: "New client" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("Birch Bakery");
+  await dialog.getByRole("combobox", { name: "Type" }).click();
+  await page.getByRole("option", { name: "Business" }).click();
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("heading", { name: "Birch Bakery" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Clients", exact: true }).click();
+  const search = page.getByRole("searchbox", { name: "Search", exact: true });
+  await search.fill(hidden.slice(0, 20));
+  await search.press("Enter");
+  await expect(page.getByRole("link", { name: "Avery Home" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Birch Bakery" })).toHaveCount(0);
+
+  await search.fill("");
+  await search.press("Enter");
+  // Wait for the new page, so the next change starts from it.
+  await expect(page.getByRole("link", { name: "Birch Bakery" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Type" }).selectOption("business");
+  await expect(page.getByRole("link", { name: "Birch Bakery" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Avery Home" })).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Owner" }).selectOption("none");
+  await expect(page).toHaveURL(/owner=none/);
+  await expect(page.getByRole("link", { name: "Birch Bakery" })).toBeVisible();
+});

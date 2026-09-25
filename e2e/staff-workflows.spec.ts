@@ -127,7 +127,7 @@ test("settings, team, templates, drafts, and open-request edits", async ({ brows
   await expectToast(page, "Client archived.");
   await page.getByRole("link", { name: "Clients" }).click();
   await expect(page.getByRole("link", { name: "Draft Client" })).toHaveCount(0);
-  await page.getByRole("switch", { name: "Show archived" }).click();
+  await page.getByRole("checkbox", { name: "Show archived" }).check();
   await expect(page.getByRole("link", { name: "Draft Client" })).toBeVisible();
 
   // Sign out is a full page load to /login; the staff area then needs a session again.
