@@ -27,3 +27,11 @@ export function newEditorItem(from?: {
 export function toItemInputs(items: EditorItem[]): ItemInput[] {
   return items.map(({ title, description, kind, required }) => ({ title, description, kind, required }));
 }
+
+/** A new list with the item at `from` moved to index `to`, clamped to the list. */
+export function moveItem<T>(items: T[], from: number, to: number): T[] {
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, item);
+  return next;
+}
