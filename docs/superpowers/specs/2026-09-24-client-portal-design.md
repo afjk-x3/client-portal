@@ -111,7 +111,7 @@ Principles:
 
 - **RLS is the security boundary.** User-facing code always uses the user-scoped Supabase client. Layout checks only decide where to send a user; they are not a security boundary.
 - **Client writes go through RPCs.** Clients change data only through `security definer` RPCs that check state. Staff writes use normal table access guarded by RLS.
-- **The service-role client has two uses.** It lives in `lib/supabase/admin.ts`, which imports `server-only`. Only the cron route and `ensureUser()` may call it (section 10.1).
+- **The service-role client has three uses.** It lives in `lib/supabase/admin.ts`, which imports `server-only`. Only the two cron routes and `ensureUser()` may call it (section 10.1).
 - **Files never pass through Vercel functions.** Vercel caps function request bodies at about 4.5 MB, so the browser uploads directly to Storage.
 
 ## 7. Data model
@@ -590,7 +590,7 @@ The route sets `maxDuration = 300`.
 - **Client writes:** only through RPCs that check state. Clients never get direct table writes.
 - **Service-role key:**
   - It lives only in `lib/supabase/admin.ts`, which imports `server-only`.
-  - It is used only by the cron route and `ensureUser`.
+  - It is used only by the two cron routes and `ensureUser`.
   - Callers of `ensureUser` check the caller's role first.
 - **Definer functions:** every `security definer` function sets `search_path = ''` and uses fully qualified names. Only `service_role` can execute `admin_user_id_by_email`.
 - **Redirects:** the `next` parameter is accepted only as a relative path: it must start with `/` and must not start with `//`.
@@ -701,7 +701,6 @@ Each ceiling is marked in code with a `ponytail:` comment that names the upgrade
 |---|---|
 | The daily job runs once, at 01:00 UTC (9 am in UTC+8), so firms in other time zones get their emails at other local hours. (Dates follow each firm's time zone since `firms.time_zone`.) | Run the job hourly (Vercel Pro) and send at a set local hour per firm. |
 | A staff user can belong to only one firm. | Drop the unique `user_id` constraint and add a firm switcher. |
-| An object is orphaned when an upload succeeds but `register_file` fails, or when a Storage delete fails after `remove_file`. | Add a nightly cleanup of objects that have no `item_files` row. |
 | Zip size is limited by the 300-second function duration. | Download files individually, or build zips in a background job. |
 | A failed send is tried up to 3 times within the run; an email that still fails, or never starts because the run hits its 300-second limit, is lost after its claim. | An outbox that the next run sends again. |
 | Optional items lock when a request completes. | Allow optional submissions on completed requests. |

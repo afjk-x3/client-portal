@@ -11,10 +11,10 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
-  - pgTAP: 254 tests in 20 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, and 4 from their review).
-  - Vitest: 63 unit tests, plus 3 integration tests that run the daily job against local Supabase.
+  - pgTAP: 312 tests in 23 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, 4 from their review, and 58 for the backlog).
+  - Vitest: 102 unit tests, plus 4 integration tests that run the daily job and the orphaned-file cleanup against local Supabase.
   - Typecheck, lint, and the production build pass.
-  - Playwright: 5 specs, the plan's happy path plus 4 broader suites.
+  - Playwright: 10 tests in 9 spec files: the plan's happy path, 4 broader suites, and 5 tests for the backlog.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
 - **CI on GitHub:** every run passed: [run 1](https://github.com/afjk-x3/client-portal/actions/runs/36063514108) and [run 2](https://github.com/afjk-x3/client-portal/actions/runs/36063612906) for the workflow itself, and [run 3](https://github.com/afjk-x3/client-portal/actions/runs/36086359624) and [run 4](https://github.com/afjk-x3/client-portal/actions/runs/36086395404) for the Phase 7 fixes, the first with the integration test. The final push starts another run, which also checks that the generated types match the migrations.
 - **Not verified here:** sending through Resend (every run used log mode), Vercel Cron, and hosted Supabase settings. The real shadcn/ui components replaced the hand-written ones in the second session, and every check passes with them.
@@ -188,6 +188,15 @@ This report was updated and pushed after every phase, so it stayed current if th
   - **Retries.** `sendEmails` tries a failed send up to 3 times, 2 and 8 seconds apart, when another try can succeed: an SMTP 4xx reply or a dropped connection, or a Resend rate limit, server error, or network failure. SMTP 5xx replies, refused logins, and Resend validation errors fail at once. This covers the daily job and every email sent after an action. 2 new unit tests, 1 updated.
   - **Paid plans, when there is budget** (verified 2026-09-25): Vercel Pro $20 a month per developer (Hobby is for non-commercial use), Supabase Pro $25 a month (100 GB files, daily backups, no pausing), a domain, and Resend (free for 3,000 emails a month, Pro $20 for 50,000).
 
+- **Backlog (third session, 2026-09-26)**, built from the [backlog plan](../plans/2026-09-25-paperline-backlog.md) in one cloud session, one commit per task:
+  - **Search and filters.** A Requests page with search, status and overdue filters, and paging; the client list also searches contact names and emails and filters by owner and type; a search box on the dashboard tabs; the Send to clients page lists every client, past 1,000 (`1e5f9d4`, `6b86b06`, `70bd28f`, `7407136`, `d6a86de`, `31bb1dc`).
+  - **Activity timeline.** Triggers record what happens to each sent request, and staff see it in an Activity section on the request page (`24623a6`, `f5a9552`).
+  - **CSV import** of clients and contacts, with a preview of every row before anything is saved (`2f41ea5`, `0b3f48a`, `2b3ee9c`).
+  - **Orphaned-file cleanup.** `/api/cron/cleanup` runs at 02:00 UTC and deletes stored files that no item points to once they are a day old (`849170d`, `08a7133`).
+  - **Drag-and-drop** ordering in the item editor; the up and down buttons stay (`17be9af`).
+  - **Tests:** pgTAP 312 (58 new), Vitest 102 (39 new), integration 4 (1 new), Playwright 10 (5 new). The browser tests had not run while the plan was checked; all passed as written except the drag-and-drop test, which now uses a 1,200-pixel-tall viewport. At 720 pixels, Playwright scrolled between pressing the mouse on item 3's handle and moving it to item 1, and Chromium then started no drag. The plan was updated to match.
+  - **Environment.** Docker was installed but not running in the cloud container, so the session started it; the container restarted once mid-build, and Docker and local Supabase were started again with the data intact. Playwright's expected Chromium build is not installed there, so the preinstalled one ran through a local, uncommitted config. CI passed on the pushes after Phases 1 to 4 (runs 16 to 19).
+
 ## Blockers
 
 - **`ui.shadcn.com` was denied by the first session's network policy** (proxy answered 403 to CONNECT). Worked around with hand-written components, which the second session replaced (above).
@@ -208,5 +217,5 @@ This report was updated and pushed after every phase, so it stayed current if th
 ## Next steps
 
 1. **Before real customers:** move to the paid plans above, then buy a domain and verify it in Resend (`RESEND_API_KEY` set, `SMTP_*` removed), and point the site at it. Add a privacy policy and terms.
-2. **Backlog:** activity timeline per request, CSV import of clients and contacts, search and filters, drag-and-drop checklist order, and a nightly cleanup of orphaned files.
+2. **Backlog:** none left.
 3. **Local setup:** `npx supabase start` (with Docker running), `cp .env.example .env.local`, then paste the keys from `npx supabase status`. The README lists every check, and notes for Windows.

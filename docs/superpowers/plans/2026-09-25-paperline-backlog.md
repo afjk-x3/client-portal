@@ -3254,6 +3254,10 @@ Create `e2e/drag-and-drop.spec.ts`:
 import { expect, test } from "@playwright/test";
 import { addClient, expectToast, signUpWithFirm, uniqueEmail } from "./helpers";
 
+// Item 3's handle and item 1 must both be on screen: otherwise Playwright scrolls
+// between pressing the mouse and moving it, and Chromium starts no drag.
+test.use({ viewport: { width: 1280, height: 1200 } });
+
 test("items in a draft can be dragged into a new order", async ({ page }) => {
   await signUpWithFirm(page, uniqueEmail("drag"), "Drag Firm", "Dee Staff");
   await addClient(page, "Drag Client");
