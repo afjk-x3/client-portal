@@ -11,8 +11,8 @@ This report was updated and pushed after every phase, so it stayed current if th
 
 - **All seven phases are done**, each phase review's findings are fixed, and a final review of everything committed after the phase reviews found nothing above Minor (below). The plan was updated in place wherever a fix changed validated code, so it still matches the repository, except for the additions beyond the plan (below).
 - **Checks on the final commit:**
-  - pgTAP: 312 tests in 23 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, 4 from their review, and 58 for the backlog).
-  - Vitest: 102 unit tests, plus 4 integration tests that run the daily job and the orphaned-file cleanup against local Supabase.
+  - pgTAP: 323 tests in 24 files (the plan's 198, plus 6 for leaving a firm, 46 for the four new features, 4 from their review, 58 for the backlog, and 11 from its review).
+  - Vitest: 107 unit tests, plus 4 integration tests that run the daily job and the orphaned-file cleanup against local Supabase.
   - Typecheck, lint, and the production build pass.
   - Playwright: 10 tests in 9 spec files: the plan's happy path, 4 broader suites, and 5 tests for the backlog.
   - `supabase db advisors` reports only the intended `multiple_permissive_policies`.
@@ -116,7 +116,7 @@ This report was updated and pushed after every phase, so it stayed current if th
   - **New request carried over (Important).** Next keeps the New request page mounted without its search params, so an unsaved request for one client appeared, and could be sent, for the next client. The editor is keyed by client.
   - **Review actions on closed requests (Important).** Returning an item on an archived request emailed a client whose portal is read-only. Accept and Needs changes now require an open or completed request.
   - **Minor:** removing an item could delete a file registered at the same moment (now `remove_item`, under the same row lock as `register_file`); "Edit details" kept a cancelled due date; dialogs and the review Sheet stayed open on hidden pages; a thrown save error discarded the editor's work; clicking the picked day cleared the due date.
-  - **Not changed:** unarchive is still two writes (reopen, then recompute); if the recompute fails, a complete request shows Open until its next item change, and it gets no reminders because it has no open items.
+  - **Not changed:** unarchive is still two writes (reopen, then recompute); if the recompute fails, a complete request shows Open until its next item change, and it gets no reminders because it has no open items. (Fixed later: the backlog review made unarchive one statement, `unarchive_request`.)
 
 - **Phase 6** (code review with live probes of every portal action and the download route; the first run stopped at the usage limit and was rerun). Contact isolation, server-built upload paths, the bucket's size and type limits, and the 20-file cap all held. Fixed:
   - **Upload queue froze (Important).** A dropped connection or a deployment during an upload made the action call throw; that file stayed "Uploading…", every later file stayed "Waiting…", and Submit stayed disabled until a full reload. Errors are now caught and the queue moves on.
@@ -195,7 +195,12 @@ This report was updated and pushed after every phase, so it stayed current if th
   - **Orphaned-file cleanup.** `/api/cron/cleanup` runs at 02:00 UTC and deletes stored files that no item points to once they are a day old (`849170d`, `08a7133`).
   - **Drag-and-drop** ordering in the item editor; the up and down buttons stay (`17be9af`).
   - **Tests:** pgTAP 312 (58 new), Vitest 102 (39 new), integration 4 (1 new), Playwright 10 (5 new). The browser tests had not run while the plan was checked; all passed as written except the drag-and-drop test, which now uses a 1,200-pixel-tall viewport. At 720 pixels, Playwright scrolled between pressing the mouse on item 3's handle and moving it to item 1, and Chromium then started no drag. The plan was updated to match.
-  - **Environment.** Docker was installed but not running in the cloud container, so the session started it; the container restarted once mid-build, and Docker and local Supabase were started again with the data intact. Playwright's expected Chromium build is not installed there, so the preinstalled one ran through a local, uncommitted config. CI passed on the pushes after Phases 1 to 4 (runs 16 to 19).
+  - **Environment.** Docker was installed but not running in the cloud container, so the session started it; the container restarted once mid-build, and Docker and local Supabase were started again with the data intact. Playwright's expected Chromium build is not installed there, so the preinstalled one ran through a local, uncommitted config. CI passed on every pushed phase (runs 16 to 20).
+  - **Review.** One fresh reviewer ran on Opus, since Fable needed usage credits. It found nothing above Minor and judged the branch ready for staging. All four findings were fixed, each test-first where a test could fail first:
+    - The CSV reader treats a quote as special only at a field's start, as Excel does, so a stray quote no longer merges rows. Files that aren't UTF-8 are refused with a pointer to Excel's "CSV UTF-8" format, names with line breaks are refused, and an over-long value names its row (`9465944`).
+    - The Activity section shows the latest 200 events and says when older ones are hidden (`7739c9b`).
+    - Tests now pin the file-removed event, a fresh orphan surviving the cleanup and a deleted file's bytes being gone, and client-list paging through the URL (`85db7b7`).
+    - Unarchive sets the final status in one statement (`unarchive_request`), so the timeline no longer adds a "completed" event after "unarchived". The completion rule moved into `computed_request_status`, shared with `refresh_request_status` (`b49b88c`).
 
 ## Blockers
 
