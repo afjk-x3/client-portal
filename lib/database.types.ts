@@ -526,6 +526,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      orphaned_documents: {
+        Args: { max_rows?: number; older_than?: string }
+        Returns: string[]
+      }
       refresh_request_status: {
         Args: { request_id: string }
         Returns: undefined
