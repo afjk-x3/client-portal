@@ -57,7 +57,7 @@ test("the Requests page searches, filters, and keeps its state in the URL", asyn
   await expect(page.getByText("Showing 1–3 of 3")).toBeVisible();
 });
 
-test("the client list searches contacts and filters by type, owner, and archived", async ({ page }) => {
+test("the client list searches contacts, filters by type, owner, and archived, and pages", async ({ page }) => {
   await signUpWithFirm(page, uniqueEmail("clients"), "Client Firm", "Cleo Staff");
   const hidden = uniqueEmail("hidden-contact");
   await addClientWithContact(page, "Avery Home", hidden);
@@ -87,4 +87,19 @@ test("the client list searches contacts and filters by type, owner, and archived
   await page.getByRole("combobox", { name: "Owner" }).selectOption("none");
   await expect(page).toHaveURL(/owner=none/);
   await expect(page.getByRole("link", { name: "Birch Bakery" })).toBeVisible();
+
+  // 55 imported clients make a second page, reached through the URL.
+  await page.getByRole("link", { name: "Import CSV" }).click();
+  const rows = Array.from({ length: 55 }, (_, i) => `Paged ${String(i + 1).padStart(2, "0")},,`);
+  await page
+    .getByLabel("CSV file")
+    .setInputFiles({ name: "paged.csv", mimeType: "text/csv", buffer: Buffer.from(["client_name,contact_name,contact_email", ...rows].join("\n")) });
+  await page.getByRole("button", { name: "Import 55 rows" }).click();
+  await expect(page.getByText(/^55 clients created/)).toBeVisible();
+  await page.getByRole("link", { name: "Back to clients" }).click();
+  await expect(page.getByText("Showing 1–50 of 57")).toBeVisible();
+  await page.getByRole("link", { name: "Next" }).click();
+  await expect(page).toHaveURL(/page=2/);
+  await expect(page.getByText("Showing 51–57 of 57")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Paged 55" })).toBeVisible();
 });

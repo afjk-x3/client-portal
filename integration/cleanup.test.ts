@@ -59,11 +59,22 @@ it("deletes stored files that no item points to, and keeps registered ones", asy
     })
     .throwOnError();
 
+  const names = async () => {
+    const { data, error } = await admin.storage.from("documents").list(folder);
+    if (error) throw error;
+    return data.map((file) => file.name);
+  };
+
+  // The default cutoff keeps a fresh orphan: its upload may still be in progress.
+  await runCleanup(admin, { maxRows: 100_000 });
+  expect(await names()).toEqual(["kept.pdf", "orphan.pdf"]);
+
   const summary = await runCleanup(admin, { olderThan: "0 seconds", maxRows: 100_000 });
 
   expect(summary.failed).toBe(0);
   expect(summary.deleted).toBeGreaterThanOrEqual(1);
-  const { data: left, error } = await admin.storage.from("documents").list(folder);
-  if (error) throw error;
-  expect(left.map((file) => file.name)).toEqual(["kept.pdf"]);
+  expect(await names()).toEqual(["kept.pdf"]);
+  // The stored bytes are gone too, not only the listing.
+  expect((await admin.storage.from("documents").download(`${folder}/kept.pdf`)).error).toBeNull();
+  expect((await admin.storage.from("documents").download(`${folder}/orphan.pdf`)).error).not.toBeNull();
 });

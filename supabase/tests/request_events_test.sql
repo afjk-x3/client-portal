@@ -1,6 +1,6 @@
 -- request_events: what each change records, who can read it, and that nobody can change it.
 begin;
-select plan(31);
+select plan(33);
 \ir fixtures/seed.psql
 
 -- The fixture's own inserts recorded events; start from none.
@@ -91,6 +91,14 @@ select results_eq(
      where request_id = 'd0000000-0000-0000-0000-0000000000a2' and kind like 'item_%' order by id $$,
   $$ values ('item_added'::text, 'Late item'::text), ('item_removed', 'Late item') $$,
   'item events keep the title');
+
+-- The contact removes the file they added to the optional item.
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select lives_ok($$ select public.remove_file((select id from public.item_files where filename = 'receipt.pdf')) $$,
+  'the contact removes their file');
+reset role;
+select is((select detail from public.request_events where kind = 'file_removed'),
+  '{"filename": "receipt.pdf", "by_staff": false}'::jsonb, 'a removed file keeps its name and who added it');
 
 -- A draft records nothing until it is sent.
 select tests.login_as('00000000-0000-0000-0000-0000000000a2');
