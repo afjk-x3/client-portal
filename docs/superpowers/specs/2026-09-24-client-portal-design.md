@@ -239,7 +239,7 @@ When a template is applied to a request, its items are **copied** into `request_
 | `draft` | Send | `open` | The request must have at least one required item. |
 | `open` / `completed` | Item change | `completed` / `open` | Automatic, by trigger (see below). |
 | `open` / `completed` | Archive | `archived` | Stops reminders. |
-| `archived` | Unarchive | `open`, then recomputed | Calls `refresh_request_status`. |
+| `archived` | Unarchive | `open` or `completed` | Whichever the items call for, in one step (`unarchive_request`). |
 | `draft` | Delete | none | Only drafts can be deleted (RLS delete policy). |
 
 **Completion trigger.** After an insert, a delete, or an update of `status` or `required` on `request_items`, the trigger calls `refresh_request_status(request_id)`. For a request in `open` or `completed`, that function sets:
@@ -305,7 +305,7 @@ Two guarantees follow from these policies:
 
 ### 8.3 RPCs
 
-Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`. That function is security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights.
+Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status` and `unarchive_request`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. Both take the completion rule from `computed_request_status`.
 
 | Function | Caller | Checks | Effect |
 |---|---|---|---|
@@ -313,7 +313,8 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `submit_item(item_id, text_answer)` | Contact | The request is `open`. The item is `requested` or `needs_changes`. A file item has at least one file. A text item has an answer of 1 to 5,000 characters. | Sets `status = 'submitted'` and `submitted_at = now()`. Saves `text_answer` for text items. |
 | `register_file(item_id, storage_path, filename)` | Contact | The same open-item checks. The item kind is `file`. The path starts with `{firm_id}/{client_id}/{item_id}/`. The object exists in the `documents` bucket. The item has fewer than 20 files. | Inserts into `item_files`, taking `size_bytes` and `mime` from `storage.objects.metadata`. Sets `uploaded_by` to the caller. |
 | `remove_file(file_id)` | Contact | The same open-item checks | Deletes the row and returns `storage_path`. |
-| `refresh_request_status(request_id)` | The trigger, and staff (for Unarchive) | Security invoker, so RLS applies | Recomputes the request status. |
+| `refresh_request_status(request_id)` | The trigger | Security invoker, so RLS applies | Recomputes the request status. |
+| `unarchive_request(request_id)` | Staff (for Unarchive) | Security invoker, so RLS applies. The request is `archived`. | Sets `open` or `completed`, whichever the items call for, in one statement, so the timeline records one `unarchived` event. Returns the id, or null when nothing changed. |
 | `admin_user_id_by_email(email)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Returns the `auth.users` id. |
 
 Client-facing RPCs raise an exception with one of two messages:

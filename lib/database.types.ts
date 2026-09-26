@@ -474,6 +474,7 @@ export type Database = {
       can_read_document: { Args: { name: string }; Returns: boolean }
       can_write_document: { Args: { name: string }; Returns: boolean }
       claim_reminder: { Args: { request_id: string }; Returns: boolean }
+      computed_request_status: { Args: { request_id: string }; Returns: string }
       create_firm: {
         Args: { full_name: string; name: string; time_zone?: string }
         Returns: string
@@ -568,6 +569,7 @@ export type Database = {
         Args: { item_id: string; text_answer?: string }
         Returns: undefined
       }
+      unarchive_request: { Args: { request_id: string }; Returns: string }
     }
     Enums: {
       [_ in never]: never

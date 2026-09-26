@@ -387,21 +387,20 @@ export async function setRequestArchived(requestId: string, archived: boolean): 
   const staff = await requireStaff();
   if (!isId(requestId) || typeof archived !== "boolean") return fail(notFound);
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("requests")
-    .update({ status: archived ? "archived" : "open" })
-    .eq("id", requestId)
-    .eq("firm_id", staff.firmId)
-    .in("status", archived ? ["open", "completed"] : ["archived"])
-    .select("id")
-    .maybeSingle();
+  // Unarchiving goes straight to the status the items call for (open or completed), in one step.
+  const { data, error } = archived
+    ? await supabase
+        .from("requests")
+        .update({ status: "archived" })
+        .eq("id", requestId)
+        .eq("firm_id", staff.firmId)
+        .in("status", ["open", "completed"])
+        .select("id")
+        .maybeSingle()
+    : await supabase.rpc("unarchive_request", { request_id: requestId });
   if (error) return fail(error);
+  // The unarchive function returns null when the request was not archived or not the caller's.
   if (!data) return fail(staleState);
-
-  if (!archived) {
-    const { error: refreshError } = await supabase.rpc("refresh_request_status", { request_id: requestId });
-    if (refreshError) return fail(refreshError);
-  }
 
   revalidatePath(`/app/requests/${requestId}`);
   return { ok: true };
