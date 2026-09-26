@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCsv } from "@/lib/csv";
+import { decodeUtf8, parseCsv } from "@/lib/csv";
 
 describe("parseCsv", () => {
   it("splits records and fields", () => {
@@ -31,5 +31,23 @@ describe("parseCsv", () => {
 
   it("reads nothing from an empty file", () => {
     expect(parseCsv("")).toEqual([]);
+  });
+
+  it("treats a quote inside an unquoted field as a plain character, as Excel does", () => {
+    expect(parseCsv('12" Subs,business\nNext Co,individual')).toEqual([
+      ['12" Subs', "business"],
+      ["Next Co", "individual"],
+    ]);
+  });
+});
+
+describe("decodeUtf8", () => {
+  it("reads UTF-8 and drops a byte-order mark", () => {
+    expect(decodeUtf8(new TextEncoder().encode("﻿Peña,José"))).toBe("Peña,José");
+  });
+
+  it("refuses text in another encoding, such as Excel's plain CSV", () => {
+    // "Peña" in Windows-1252, where ñ is the single byte 0xF1.
+    expect(decodeUtf8(new Uint8Array([0x50, 0x65, 0xf1, 0x61]))).toBeNull();
   });
 });

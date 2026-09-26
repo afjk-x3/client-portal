@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MAX_IMPORT_BYTES, readImportRows, type ImportRow, type RowOutcome } from "@/lib/client-import";
-import { parseCsv } from "@/lib/csv";
+import { decodeUtf8, parseCsv } from "@/lib/csv";
 import { importClients, previewImport, type ImportResult } from "./actions";
 
 const LABEL: Record<RowOutcome["outcome"], [string, "default" | "secondary" | "outline" | "destructive"]> = {
@@ -41,7 +41,14 @@ export function ImportForm() {
       return;
     }
     startTransition(async () => {
-      const read = readImportRows(parseCsv(await file.text()));
+      const text = decodeUtf8(await file.arrayBuffer());
+      if (text === null) {
+        setProblem(
+          'This file is not saved as UTF-8, so letters like ñ would come out wrong. In Excel, use Save As and choose "CSV UTF-8 (Comma delimited)", then try again.',
+        );
+        return;
+      }
+      const read = readImportRows(parseCsv(text));
       if (!read.ok) {
         setProblem(read.error);
         return;

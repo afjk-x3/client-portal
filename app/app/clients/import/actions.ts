@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireStaff } from "@/lib/auth";
-import { MAX_IMPORT_ROWS, planImport, type ExistingClient, type ImportRow, type RowOutcome } from "@/lib/client-import";
+import {
+  MAX_IMPORT_FIELD,
+  MAX_IMPORT_ROWS,
+  planImport,
+  type ExistingClient,
+  type ImportRow,
+  type RowOutcome,
+} from "@/lib/client-import";
 import { errorMessage, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
@@ -14,16 +21,19 @@ const rowsSchema = z
   .array(
     z.object({
       row: z.number().int().min(2),
-      clientName: z.string().max(1000),
-      clientType: z.string().max(100),
-      contactName: z.string().max(1000),
-      contactEmail: z.string().max(1000),
+      clientName: z.string().max(MAX_IMPORT_FIELD),
+      clientType: z.string().max(MAX_IMPORT_FIELD),
+      contactName: z.string().max(MAX_IMPORT_FIELD),
+      contactEmail: z.string().max(MAX_IMPORT_FIELD),
     }),
   )
   .min(1)
   .max(MAX_IMPORT_ROWS);
 
-const badRows = { ok: false as const, error: `A file must have between 1 and ${MAX_IMPORT_ROWS} rows.` };
+const badRows = {
+  ok: false as const,
+  error: `A file must have between 1 and ${MAX_IMPORT_ROWS} rows, with no value longer than ${MAX_IMPORT_FIELD.toLocaleString("en-US")} characters.`,
+};
 
 export type ImportResult = {
   clientsCreated: number;

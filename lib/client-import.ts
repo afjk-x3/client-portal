@@ -3,6 +3,8 @@ import { emailSchema, personNameSchema } from "@/lib/validation";
 
 export const MAX_IMPORT_ROWS = 500;
 export const MAX_IMPORT_BYTES = 1024 * 1024;
+/** The longest value any column may hold; the import actions accept nothing longer. */
+export const MAX_IMPORT_FIELD = 1000;
 
 /** The file staff can download from the import page. */
 export const IMPORT_TEMPLATE = [
@@ -68,6 +70,15 @@ export function readImportRows(records: string[][]): { ok: true; rows: ImportRow
     .filter((row) => [row.clientName, row.clientType, row.contactName, row.contactEmail].some((v) => v.trim() !== ""));
   if (rows.length === 0) return { ok: false, error: "The file has no rows after the header." };
   if (rows.length > MAX_IMPORT_ROWS) return { ok: false, error: `A file can have at most ${MAX_IMPORT_ROWS} rows.` };
+  const long = rows.find((row) =>
+    [row.clientName, row.clientType, row.contactName, row.contactEmail].some((v) => v.length > MAX_IMPORT_FIELD),
+  );
+  if (long) {
+    return {
+      ok: false,
+      error: `Row ${long.row} has a value longer than ${MAX_IMPORT_FIELD.toLocaleString("en-US")} characters.`,
+    };
+  }
   return { ok: true, rows };
 }
 
@@ -87,6 +98,8 @@ function checkRow(input: ImportRow): { ok: true; value: Checked } | { ok: false;
   const kind: Kind = type === "business" ? "business" : "individual";
   const name = input.contactName.trim();
   const email = input.contactEmail.trim();
+  // Quoted CSV fields may hold line breaks; a name never should.
+  if (/[\r\n]/.test(clientName) || /[\r\n]/.test(name)) return { ok: false, error: "Names can't contain line breaks." };
   if (name === "" && email === "") return { ok: true, value: { clientName, kind, contact: null } };
   if (email === "") return { ok: false, error: "The contact's email is missing." };
   if (name === "") return { ok: false, error: "The contact's name is missing." };

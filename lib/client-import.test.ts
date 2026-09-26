@@ -37,6 +37,16 @@ describe("readImportRows", () => {
     const many = Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => [`Client ${i}`, "", ""]);
     expect(readImportRows([header, ...many])).toEqual({ ok: false, error: "A file can have at most 500 rows." });
   });
+
+  it("names the row that has an over-long value", () => {
+    expect(
+      readImportRows([
+        ["client_name", "contact_name", "contact_email"],
+        ["Acme", "", ""],
+        ["x".repeat(1001), "", ""],
+      ]),
+    ).toEqual({ ok: false, error: "Row 3 has a value longer than 1,000 characters." });
+  });
 });
 
 describe("planImport", () => {
@@ -100,5 +110,13 @@ describe("planImport", () => {
       [9, "error", "Same as row 8."],
     ]);
     expect(plan.contacts.map((c) => c.row)).toEqual([8]);
+  });
+
+  it("refuses names with line breaks", () => {
+    const plan = planImport([row(2, "Two\nLines"), row(3, "Acme", "Jo\nBaker", "jo@example.com")], existing);
+    expect(plan.outcomes.map((o) => [o.row, o.outcome, o.message])).toEqual([
+      [2, "error", "Names can't contain line breaks."],
+      [3, "error", "Names can't contain line breaks."],
+    ]);
   });
 });

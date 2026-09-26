@@ -49,4 +49,13 @@ test("importing clients previews each row, then adds only what is new", async ({
   await page.getByLabel("CSV file").setInputFiles(file);
   await expect(result(2)).toContainText("Contact already on this client.");
   await expect(page.getByRole("button", { name: "Import 0 rows" })).toBeDisabled();
+
+  // Excel's plain "CSV (Comma delimited)" is Windows-1252, not UTF-8: refused rather than garbled.
+  const ansi = Buffer.concat([
+    Buffer.from("client_name,client_type,contact_name,contact_email\nPe"),
+    Buffer.from([0xf1]), // ñ in Windows-1252
+    Buffer.from("a Household,,,\n"),
+  ]);
+  await page.getByLabel("CSV file").setInputFiles({ name: "ansi.csv", mimeType: "text/csv", buffer: ansi });
+  await expect(page.getByText(/not saved as UTF-8/)).toBeVisible();
 });
