@@ -82,8 +82,7 @@ export async function removeFile(fileId: string): Promise<ActionResult> {
   // Storage reports a refused delete as success with no rows, not as an error.
   const { data: removed, error: storageError } = await supabase.storage.from("documents").remove([path]);
   if (storageError || removed.length === 0) {
-    // ponytail: the object is orphaned when this delete fails after remove_file.
-    // Upgrade path: a nightly cleanup of objects that have no item_files row.
+    // The nightly cleanup (/api/cron/cleanup) removes the object a day later.
     console.error("Storage delete failed after remove_file", storageError ?? path);
   }
 

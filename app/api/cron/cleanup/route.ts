@@ -1,18 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { runCleanup } from "@/lib/cleanup";
 import { refuseUnlessCron } from "@/lib/cron";
-import { runDailyJobs } from "@/lib/daily-jobs";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const maxDuration = 300;
 
-/** Vercel Cron calls this once a day with Authorization: Bearer ${CRON_SECRET}. */
+/** Vercel Cron calls this once a day, an hour after the daily job. */
 export async function GET(request: NextRequest) {
   const refused = refuseUnlessCron(request);
   if (refused) return refused;
 
-  const summary = await runDailyJobs(createAdminClient());
-  console.log(JSON.stringify({ job: "daily", ...summary }));
+  const summary = await runCleanup(createAdminClient());
+  console.log(JSON.stringify({ job: "cleanup", ...summary }));
   // An error status marks the run as failed in Vercel's cron logs.
-  const ok = summary.failedFirms === 0 && summary.failed === 0;
-  return NextResponse.json(summary, { status: ok ? 200 : 500 });
+  return NextResponse.json(summary, { status: summary.failed === 0 ? 200 : 500 });
 }

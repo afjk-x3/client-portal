@@ -32,8 +32,7 @@ export async function uploadFile(itemId: string, file: File): Promise<string | n
     const registered = await registerFile(itemId, path, file.name);
     if (registered.ok) return null;
     // The object is not registered, so the uploader may still delete it; a retry uploads it again.
-    // ponytail: the object is orphaned if this delete fails too. Upgrade path: a nightly
-    // cleanup of objects that have no item_files row.
+    // If this delete fails too, the nightly cleanup (/api/cron/cleanup) removes the object.
     await storage.remove([path]);
     return registered.error;
   } catch {

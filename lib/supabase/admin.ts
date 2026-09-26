@@ -3,8 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
 /**
- * Service-role client. It bypasses RLS, so only two callers may use it:
- * the daily cron route and ensureUser() below.
+ * Service-role client. It bypasses RLS, so only three callers may use it:
+ * the two cron routes and ensureUser() below.
  */
 export function createAdminClient() {
   return createClient<Database>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, {
