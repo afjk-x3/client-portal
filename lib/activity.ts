@@ -2,6 +2,9 @@ import { formatDate } from "@/lib/dates";
 
 type Detail = Record<string, unknown>;
 
+/** Events the Activity section shows, newest first. Older ones are left out, and the section says so. */
+export const ACTIVITY_LIMIT = 200;
+
 const quoted = (value: unknown) => `“${String(value)}”`;
 
 /** Who did it: a staff member or contact by name, "PaperLine" for the daily job, or "Former user". */

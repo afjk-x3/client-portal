@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RequestStatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { actorName, describeEvent, itemLabel } from "@/lib/activity";
+import { ACTIVITY_LIMIT, actorName, describeEvent, itemLabel } from "@/lib/activity";
 import { requireStaff } from "@/lib/auth";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
@@ -76,7 +76,9 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
       .from("request_events")
       .select("id, kind, item_id, actor_id, detail, created_at")
       .eq("request_id", request.id)
-      .order("id", { ascending: false }),
+      .order("id", { ascending: false })
+      // One more than shown, to tell whether older events exist.
+      .limit(ACTIVITY_LIMIT + 1),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId),
     supabase.from("client_contacts").select("user_id, full_name").eq("client_id", request.client_id),
   ]);
@@ -89,7 +91,8 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
     ...members.data.map((member) => [member.user_id, member.full_name] as const),
   ]);
   const titles = new Map(request.request_items.map((item) => [item.id, item.title]));
-  const activity = events.data.map((event) => {
+  const olderHidden = events.data.length > ACTIVITY_LIMIT;
+  const activity = events.data.slice(0, ACTIVITY_LIMIT).map((event) => {
     const detail = (event.detail ?? {}) as Record<string, unknown>;
     return {
       id: event.id,
@@ -144,7 +147,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           })),
         }))}
       />
-      <Activity events={activity} />
+      <Activity events={activity} olderHidden={olderHidden} />
     </>
   );
 }

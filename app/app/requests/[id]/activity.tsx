@@ -1,5 +1,12 @@
 /** A request's timeline, newest first. Staff only. */
-export function Activity({ events }: { events: { id: number; actor: string; text: string; at: string }[] }) {
+export function Activity({
+  events,
+  olderHidden,
+}: {
+  events: { id: number; actor: string; text: string; at: string }[];
+  /** True when the page left out older events. */
+  olderHidden: boolean;
+}) {
   return (
     <section aria-labelledby="activity-heading" className="flex flex-col gap-3">
       <h2 id="activity-heading" className="text-lg font-semibold">
@@ -17,6 +24,7 @@ export function Activity({ events }: { events: { id: number; actor: string; text
           ))}
         </ol>
       )}
+      {olderHidden && <p className="text-sm text-muted-foreground">Older events are not shown.</p>}
     </section>
   );
 }
