@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { Plus } from "lucide-react";
+import Link from "next/link";
+import { Plus, Upload } from "lucide-react";
 import { Pager } from "@/components/pager";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,18 +52,26 @@ async function Clients({ searchParams }: Pick<PageProps<"/app/clients">, "search
     <>
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">Clients</h1>
-        <ClientFormDialog
-          title="New client"
-          members={memberList}
-          action={addClient}
-          openAfterSave
-          trigger={
-            <Button>
-              <Plus />
-              New client
-            </Button>
-          }
-        />
+        <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/app/clients/import">
+              <Upload />
+              Import CSV
+            </Link>
+          </Button>
+          <ClientFormDialog
+            title="New client"
+            members={memberList}
+            action={addClient}
+            openAfterSave
+            trigger={
+              <Button>
+                <Plus />
+                New client
+              </Button>
+            }
+          />
+        </div>
       </div>
       <ClientFiltersForm filters={filters} members={memberList} />
       <ClientsTable
