@@ -302,6 +302,7 @@ export type Database = {
           submitted_at: string | null
           text_answer: string | null
           title: string
+          unavailable_reason: string | null
         }
         Insert: {
           created_at?: string
@@ -319,6 +320,7 @@ export type Database = {
           submitted_at?: string | null
           text_answer?: string | null
           title: string
+          unavailable_reason?: string | null
         }
         Update: {
           created_at?: string
@@ -336,6 +338,7 @@ export type Database = {
           submitted_at?: string | null
           text_answer?: string | null
           title?: string
+          unavailable_reason?: string | null
         }
         Relationships: [
           {
@@ -525,6 +528,10 @@ export type Database = {
           kind: string
           request_id: string
         }
+        Returns: undefined
+      }
+      mark_unavailable: {
+        Args: { item_id: string; reason: string }
         Returns: undefined
       }
       orphaned_documents: {
