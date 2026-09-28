@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
-import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
+import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
+import { confirmsName } from "@/lib/retention";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { clientSchema, contactSchema, isId } from "@/lib/validation";
@@ -101,4 +103,35 @@ export async function removeContact(clientId: string, userId: string): Promise<A
 
   revalidatePath(`/app/clients/${clientId}`);
   return { ok: true };
+}
+
+/** Permanently deletes an archived client, after the admin types its name. */
+export async function deleteClient(clientId: string, confirmation: string): Promise<ActionResult> {
+  const staff = await requireStaff();
+  if (staff.role !== "admin") return { ok: false, error: "Only admins can delete clients." };
+  if (!isId(clientId)) return fail(notFound);
+  const supabase = await createClient();
+  const { data: client } = await supabase
+    .from("clients")
+    .select("name")
+    .eq("id", clientId)
+    .eq("firm_id", staff.firmId)
+    .maybeSingle();
+  if (!client) return fail(staleState);
+  if (!confirmsName(confirmation, client.name))
+    return { ok: false, error: "Type the client's name exactly to confirm." };
+
+  const { data, error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", clientId)
+    .eq("firm_id", staff.firmId)
+    .not("archived_at", "is", null)
+    .select("id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!data) return fail(staleState);
+
+  revalidatePath("/app/clients");
+  redirect("/app/clients");
 }

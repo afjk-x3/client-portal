@@ -15,6 +15,7 @@ import { isId } from "@/lib/validation";
 import { ClientFormDialog } from "../client-form-dialog";
 import { setClientArchived, updateClient } from "./actions";
 import { Contacts } from "./contacts";
+import { DeleteClient } from "./delete-client";
 
 export default function ClientPage({ params }: PageProps<"/app/clients/[id]">) {
   return (
@@ -89,6 +90,7 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
           >
             {archived ? "Unarchive" : "Archive"}
           </ActionButton>
+          {archived && staff.role === "admin" && <DeleteClient clientId={id} name={client.name} />}
           <Button asChild>
             <Link href={`/app/requests/new?client=${id}`}>
               <Plus />
