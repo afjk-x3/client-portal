@@ -12,7 +12,7 @@ import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
-import { removeFile, submitItem } from "./actions";
+import { removeFile, markUnavailable, submitItem } from "./actions";
 import { rejection, uploadFile } from "./upload";
 
 export type PortalItem = {
@@ -24,6 +24,7 @@ export type PortalItem = {
   status: string;
   textAnswer: string | null;
   reviewNote: string | null;
+  unavailableReason: string | null;
   /** byStaff: added by the firm, so the contact cannot remove it. */
   files: { id: string; filename: string; sizeBytes: number; byStaff: boolean }[];
 };
@@ -69,7 +70,17 @@ function formatSize(bytes: number) {
 function FileItem({ item, editable, firmName }: { item: PortalItem; editable: boolean; firmName: string }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [answering, setAnswering] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
+
+  const [, formAction, pending] = useActionState(async (_prev: ActionResult | null, formData: FormData) => {
+    const result = await markUnavailable(item.id, String(formData.get("reason") ?? ""));
+    if (result.ok) {
+      toast.success(`Sent. ${firmName} will review it.`);
+      setAnswering(false);
+    } else toast.error(result.error);
+    return result;
+  }, null);
 
   // A file dropped outside the drop zone would replace the page, and uploads in progress with it.
   useEffect(() => {
@@ -127,6 +138,11 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
 
   return (
     <div className="flex flex-col gap-3">
+      {(item.status === "submitted" || item.status === "accepted") && item.unavailableReason && (
+        <p className="whitespace-pre-wrap text-sm">
+          You told {firmName} you don&apos;t have this: “{item.unavailableReason}”
+        </p>
+      )}
       {item.files.length > 0 && (
         <ul className="flex flex-col gap-2">
           {item.files.map((file) => (
@@ -214,6 +230,34 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
             }}
           />
         </label>
+      )}
+      {editable && item.files.length === 0 && uploads.length === 0 && !answering && (
+        <Button variant="outline" className="self-start" onClick={() => setAnswering(true)}>
+          I don&apos;t have this
+        </Button>
+      )}
+      {editable && item.files.length === 0 && uploads.length === 0 && answering && (
+        <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
+          <label htmlFor={`unavailable-${item.id}`} className="text-sm font-medium">
+            Why not?
+          </label>
+          <Textarea
+            id={`unavailable-${item.id}`}
+            name="reason"
+            placeholder="For example: no investment account this year"
+            maxLength={LIMITS.unavailableReason}
+            rows={4}
+            required
+          />
+          <div className="flex gap-2">
+            <Button type="submit" disabled={pending}>
+              Send to {firmName}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setAnswering(false)} disabled={pending}>
+              Cancel
+            </Button>
+          </div>
+        </form>
       )}
       {editable && (
         <ActionButton

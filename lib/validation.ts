@@ -14,6 +14,7 @@ export const personNameSchema = text("Name", LIMITS.name);
 export const emailSchema = z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address."));
 export const reviewNoteSchema = text("Note", LIMITS.reviewNote);
 export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
+export const unavailableReasonSchema = text("Reason", LIMITS.unavailableReason);
 export const filenameSchema = text("File name", LIMITS.filename);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 export const roleSchema = z.enum(["admin", "staff"]);

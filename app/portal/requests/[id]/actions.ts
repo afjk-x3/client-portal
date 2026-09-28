@@ -8,7 +8,7 @@ import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { storagePath } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
-import { filenameSchema, isId, textAnswerSchema } from "@/lib/validation";
+import { filenameSchema, isId, textAnswerSchema, unavailableReasonSchema } from "@/lib/validation";
 
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
@@ -85,6 +85,20 @@ export async function removeFile(fileId: string): Promise<ActionResult> {
     // The nightly cleanup (/api/cron/cleanup) removes the object a day later.
     console.error("Storage delete failed after remove_file", storageError ?? path);
   }
+
+  revalidateRequestPages();
+  return { ok: true };
+}
+
+/** The contact answers that an empty file item has nothing to upload. */
+export async function markUnavailable(itemId: string, reason: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
+  const parsed = unavailableReasonSchema.safeParse(reason);
+  if (!parsed.success) return invalid(parsed.error);
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("mark_unavailable", { item_id: itemId, reason: parsed.data });
+  if (error) return fail(error);
 
   revalidateRequestPages();
   return { ok: true };

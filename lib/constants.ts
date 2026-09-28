@@ -15,5 +15,6 @@ export const LIMITS = {
   description: 2000,
   textAnswer: 5000,
   reviewNote: 1000,
+  unavailableReason: 1000,
   filename: 255,
 } as const;
