@@ -152,6 +152,7 @@ export type Database = {
       firms: {
         Row: {
           created_at: string
+          file_retention_years: number | null
           id: string
           name: string
           plan: string
@@ -159,6 +160,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          file_retention_years?: number | null
           id?: string
           name: string
           plan?: string
@@ -166,6 +168,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          file_retention_years?: number | null
           id?: string
           name?: string
           plan?: string
@@ -352,10 +355,12 @@ export type Database = {
       }
       requests: {
         Row: {
+          archived_at: string | null
           client_id: string
           created_at: string
           created_by: string | null
           due_date: string
+          files_deleted_at: string | null
           firm_id: string
           id: string
           sent_at: string | null
@@ -363,10 +368,12 @@ export type Database = {
           title: string
         }
         Insert: {
+          archived_at?: string | null
           client_id: string
           created_at?: string
           created_by?: string | null
           due_date: string
+          files_deleted_at?: string | null
           firm_id: string
           id?: string
           sent_at?: string | null
@@ -374,10 +381,12 @@ export type Database = {
           title: string
         }
         Update: {
+          archived_at?: string | null
           client_id?: string
           created_at?: string
           created_by?: string | null
           due_date?: string
+          files_deleted_at?: string | null
           firm_id?: string
           id?: string
           sent_at?: string | null
@@ -482,6 +491,7 @@ export type Database = {
         Args: { full_name: string; name: string; time_zone?: string }
         Returns: string
       }
+      expire_files: { Args: { max_rows?: number }; Returns: number }
       is_client_contact: { Args: { client_id: string }; Returns: boolean }
       is_firm_admin: { Args: { firm_id: string }; Returns: boolean }
       is_firm_contact: { Args: { firm_id: string }; Returns: boolean }
@@ -548,6 +558,7 @@ export type Database = {
       }
       remove_file: { Args: { file_id: string }; Returns: string }
       remove_item: { Args: { item_id: string }; Returns: string }
+      retention_preview: { Args: { years: number }; Returns: number }
       save_draft: {
         Args: {
           client_id: string
