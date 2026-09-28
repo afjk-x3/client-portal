@@ -42,6 +42,29 @@ export function parseCsv(text: string): string[][] {
 }
 
 /**
+ * Records as CSV text: fields joined with commas, records with CRLF. A field
+ * that contains a comma, a quote, a CR, or an LF is wrapped in quotes with its
+ * quotes doubled; everything else stays bare.
+ */
+export function toCsv(records: string[][]): string {
+  return records
+    .map((record) =>
+      record
+        .map((field) => (/[",\r\n]/.test(field) ? `"${field.replaceAll('"', '""')}"` : field))
+        .join(","),
+    )
+    .join("\r\n");
+}
+
+/**
+ * A leading apostrophe on values starting with =, +, -, @, a tab, or a
+ * carriage return, so a spreadsheet shows them instead of running them.
+ */
+export function spreadsheetSafe(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
+/**
  * The text of a UTF-8 file, without a byte-order mark, or null for any other
  * encoding. Excel's plain "CSV" is not UTF-8 and would turn letters like ñ into �.
  */
