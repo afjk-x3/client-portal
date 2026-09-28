@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { LIMITS, MAX_CLIENTS_PER_SEND } from "@/lib/constants";
 import { sendToClients } from "@/app/app/requests/actions";
 
@@ -37,6 +38,7 @@ export function SendToClientsForm({
   const id = useId();
   const [title, setTitle] = useState(defaultTitle);
   const [dueDate, setDueDate] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [pending, startTransition] = useTransition();
@@ -58,7 +60,13 @@ export function SendToClientsForm({
 
   function send() {
     startTransition(async () => {
-      const result = await sendToClients({ templateId, title, dueDate: dueDate ?? "", clientIds: [...selected] });
+      const result = await sendToClients({
+        templateId,
+        title,
+        dueDate: dueDate ?? "",
+        clientIds: [...selected],
+        message,
+      });
       if (!result.ok) {
         toast.error(result.error);
         return;
@@ -85,6 +93,17 @@ export function SendToClientsForm({
           <Label htmlFor={`${id}-due`}>Due date</Label>
           <DatePicker id={`${id}-due`} value={dueDate} onChange={setDueDate} />
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`${id}-message`}>Message to the client (optional)</Label>
+        <Textarea
+          id={`${id}-message`}
+          value={message}
+          maxLength={LIMITS.message}
+          rows={3}
+          onChange={(event) => setMessage(event.target.value)}
+        />
       </div>
 
       <div className="flex flex-col gap-2">

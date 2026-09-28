@@ -72,8 +72,8 @@ async function NewRequest({ searchParams }: Pick<PageProps<"/app/requests/new">,
         clientId={client.id}
         initial={
           source
-            ? { title: source.title, dueDate: null, items: source.request_items.map(newEditorItem) }
-            : { title: "", dueDate: null, items: [] }
+            ? { title: source.title, dueDate: null, items: source.request_items.map(newEditorItem), message: "" }
+            : { title: "", dueDate: null, items: [], message: "" }
         }
         templates={templates.data.map((t) => ({ id: t.id, name: t.name, items: t.template_items }))}
       />

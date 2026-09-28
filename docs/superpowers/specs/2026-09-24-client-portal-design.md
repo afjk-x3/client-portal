@@ -193,6 +193,7 @@ Principles:
 | `due_date` | date | Required |
 | `status` | text | `draft`, `open`, `completed`, or `archived`; default `draft` |
 | `sent_at` | timestamptz, nullable | |
+| `message` | text, nullable | Optional personal message to the client; 1 to 2,000 characters when present |
 | `created_by` | uuid, nullable | references `auth.users`, on delete set null |
 
 **`request_items`**: `unique (id, firm_id)`

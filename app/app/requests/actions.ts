@@ -21,7 +21,7 @@ export async function saveDraft(input: z.input<typeof draftSchema>): Promise<Act
   await requireStaff();
   const parsed = draftSchema.safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
-  const { requestId, clientId, title, dueDate, items } = parsed.data;
+  const { requestId, clientId, title, dueDate, items, message } = parsed.data;
 
   const supabase = await createClient();
   const { data: id, error } = await supabase.rpc("save_draft", {
@@ -30,6 +30,7 @@ export async function saveDraft(input: z.input<typeof draftSchema>): Promise<Act
     due_date: dueDate,
     items,
     request_id: requestId,
+    message: message ?? undefined,
   });
   if (error) return fail(error);
 
@@ -50,7 +51,7 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
   const supabase = await createClient();
   const { data: request, error: requestError } = await supabase
     .from("requests")
-    .select("id, title, due_date, client_id, request_items(required)")
+    .select("id, title, due_date, message, client_id, request_items(required)")
     .eq("id", requestId)
     .eq("firm_id", staff.firmId)
     .maybeSingle();
@@ -74,6 +75,7 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     dueDate: request.due_date,
     itemCount: request.request_items.length,
     requestId,
+    message: request.message,
   });
   const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
 
@@ -151,7 +153,7 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
   const staff = await requireStaff();
   const parsed = bulkSendSchema.safeParse(input);
   if (!parsed.success) return invalid(parsed.error);
-  const { templateId, title, dueDate, clientIds } = parsed.data;
+  const { templateId, title, dueDate, clientIds, message } = parsed.data;
 
   const supabase = await createClient();
   const [template, clients, firm] = await Promise.all([
@@ -178,7 +180,14 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
   const firmName = firm.data.name;
   const requestIds = clientIds.map(() => crypto.randomUUID());
   const messages = clientIds.flatMap((clientId, index) => {
-    const content = requestSentEmail({ firmName, title, dueDate, itemCount: items.length, requestId: requestIds[index] });
+    const content = requestSentEmail({
+      firmName,
+      title,
+      dueDate,
+      itemCount: items.length,
+      requestId: requestIds[index],
+      message,
+    });
     const contacts = clients.data.find((client) => client.id === clientId)?.client_contacts ?? [];
     return contacts.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
   });
@@ -189,6 +198,7 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
     due_date: dueDate,
     client_ids: clientIds,
     request_ids: requestIds,
+    message: message ?? undefined,
   });
   if (error) return fail(error);
 
@@ -216,7 +226,7 @@ export async function deleteDraft(requestId: string): Promise<ActionResult> {
   redirect(`/app/clients/${data.client_id}`);
 }
 
-/** Title and due date of a sent request (drafts use saveDraft). */
+/** Title, due date, and message of a sent request (drafts use saveDraft). */
 export async function updateRequestDetails(
   requestId: string,
   _prev: ActionResult | null,
@@ -230,7 +240,7 @@ export async function updateRequestDetails(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("requests")
-    .update({ title: parsed.data.title, due_date: parsed.data.dueDate })
+    .update({ title: parsed.data.title, due_date: parsed.data.dueDate, message: parsed.data.message })
     .eq("id", requestId)
     .eq("firm_id", staff.firmId)
     .in("status", ["open", "completed"])

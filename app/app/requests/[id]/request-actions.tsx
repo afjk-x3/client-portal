@@ -32,6 +32,7 @@ export function RequestActions({
   clientId,
   title,
   dueDate,
+  message,
   status,
   canRemind,
 }: {
@@ -39,6 +40,7 @@ export function RequestActions({
   clientId: string;
   title: string;
   dueDate: string;
+  message: string | null;
   status: string;
   /** Open, for an active client, with an item still to do. */
   canRemind: boolean;
@@ -47,7 +49,9 @@ export function RequestActions({
 
   return (
     <div className="flex flex-wrap gap-2">
-      {!archived && <EditDetailsDialog requestId={requestId} title={title} dueDate={dueDate} />}
+      {!archived && (
+        <EditDetailsDialog requestId={requestId} title={title} dueDate={dueDate} message={message} />
+      )}
       {!archived && <AddItemDialog requestId={requestId} />}
       {canRemind && (
         <ActionButton variant="outline" action={() => sendReminder(requestId)} success="Reminder sent.">
@@ -99,7 +103,17 @@ function useDialogAction(action: (prev: ActionResult | null, formData: FormData)
   return { open, setOpen, formAction, pending };
 }
 
-function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; title: string; dueDate: string }) {
+function EditDetailsDialog({
+  requestId,
+  title,
+  dueDate,
+  message,
+}: {
+  requestId: string;
+  title: string;
+  dueDate: string;
+  message: string | null;
+}) {
   const { open, setOpen, formAction, pending } = useDialogAction(
     updateRequestDetails.bind(null, requestId),
     "Request updated.",
@@ -111,7 +125,7 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        // Start from the saved date each time, not one picked and then cancelled.
+        // Start from the saved values each time, not ones picked and then cancelled.
         if (next) setDate(dueDate);
         setOpen(next);
       }}
@@ -131,6 +145,16 @@ function EditDetailsDialog({ requestId, title, dueDate }: { requestId: string; t
           <div className="flex flex-col gap-2">
             <Label htmlFor={`${id}-due`}>Due date</Label>
             <DatePicker id={`${id}-due`} name="dueDate" value={date} onChange={setDate} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={`${id}-message`}>Message to the client (optional)</Label>
+            <Textarea
+              id={`${id}-message`}
+              name="message"
+              defaultValue={message ?? ""}
+              maxLength={LIMITS.message}
+              rows={3}
+            />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>

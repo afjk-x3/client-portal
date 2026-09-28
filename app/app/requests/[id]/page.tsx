@@ -30,7 +30,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   const { data: request, error } = await supabase
     .from("requests")
     .select(
-      `id, title, status, due_date, sent_at, client_id, files_deleted_at, clients(name, archived_at),
+      `id, title, status, due_date, sent_at, message, client_id, files_deleted_at, clients(name, archived_at),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note,
          unavailable_reason, submitted_at,
          item_files(id, filename, size_bytes, created_at, by_staff))`,
@@ -66,6 +66,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
             title: request.title,
             dueDate: request.due_date,
             items: request.request_items.map((item) => newEditorItem(item)),
+            message: request.message ?? "",
           }}
         />
       </>
@@ -120,6 +121,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           clientId={request.client_id}
           title={request.title}
           dueDate={request.due_date}
+          message={request.message}
           status={request.status}
           canRemind={
             request.status === "open" &&

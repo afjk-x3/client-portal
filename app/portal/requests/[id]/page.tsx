@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RequestStatusBadge } from "@/components/status-badge";
+import { Card, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getContactClientIds } from "@/lib/auth";
@@ -27,7 +28,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
   const { data: request, error } = await supabase
     .from("requests")
     .select(
-      `id, title, status, due_date, clients(firms(name)),
+      `id, title, status, due_date, message, clients(firms(name)),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note,
          unavailable_reason, item_files(id, filename, size_bytes, created_at, by_staff))`,
     )
@@ -56,6 +57,12 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
         <p className="text-sm text-muted-foreground">
           From {request.clients?.firms?.name} · Due {formatDate(request.due_date)}
         </p>
+        {request.message && (
+          <Card className="gap-2 py-4">
+            <CardTitle className="px-4 text-base">Message from {request.clients?.firms?.name}</CardTitle>
+            <p className="whitespace-pre-wrap px-4 text-sm">{request.message}</p>
+          </Card>
+        )}
         <div className="flex items-center gap-3">
           <Progress value={progress} aria-label="Progress" />
           <span className="text-sm text-muted-foreground">{progress}%</span>

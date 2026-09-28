@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { deleteDraft, saveDraft, sendRequest } from "./actions";
 
 export type TemplateOption = {
@@ -39,7 +40,7 @@ export function RequestEditor({
 }: {
   clientId: string;
   requestId?: string;
-  initial: { title: string; dueDate: string | null; items: EditorItem[] };
+  initial: { title: string; dueDate: string | null; items: EditorItem[]; message: string };
   templates?: TemplateOption[];
 }) {
   const router = useRouter();
@@ -48,6 +49,7 @@ export function RequestEditor({
   const [title, setTitle] = useState(initial.title);
   const [dueDate, setDueDate] = useState(initial.dueDate);
   const [items, setItems] = useState(initial.items);
+  const [message, setMessage] = useState(initial.message);
   const [pending, startTransition] = useTransition();
 
   function applyTemplate(value: string) {
@@ -60,7 +62,14 @@ export function RequestEditor({
   function save(send: boolean) {
     startTransition(async () => {
       try {
-        const saved = await saveDraft({ requestId, clientId, title, dueDate: dueDate ?? "", items: toItemInputs(items) });
+        const saved = await saveDraft({
+          requestId,
+          clientId,
+          title,
+          dueDate: dueDate ?? "",
+          items: toItemInputs(items),
+          message,
+        });
         if (!saved.ok) {
           toast.error(saved.error);
           return;
@@ -82,6 +91,7 @@ export function RequestEditor({
             setTitle("");
             setDueDate(null);
             setItems([]);
+            setMessage("");
             router.push(`/app/requests/${savedId}`);
           });
         }
@@ -122,6 +132,16 @@ export function RequestEditor({
           <Label htmlFor={`${id}-due-date`}>Due date</Label>
           <DatePicker id={`${id}-due-date`} value={dueDate} onChange={setDueDate} />
         </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`${id}-message`}>Message to the client (optional)</Label>
+        <Textarea
+          id={`${id}-message`}
+          value={message}
+          maxLength={LIMITS.message}
+          rows={3}
+          onChange={(e) => setMessage(e.target.value)}
+        />
       </div>
       <div className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">Items</h2>
