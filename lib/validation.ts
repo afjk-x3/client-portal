@@ -19,6 +19,10 @@ export const filenameSchema = text("File name", LIMITS.filename);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 export const roleSchema = z.enum(["admin", "staff"]);
 export const timeZoneSchema = z.string().refine(isTimeZone, "Pick a time zone.");
+/** The retention select's value: "forever" or a number of years, as null or the year count. */
+export const retentionSchema = z
+  .enum(["forever", "1", "2", "3", "5", "7", "10"])
+  .transform((value) => (value === "forever" ? null : Number(value)));
 
 const idSchema = z.uuid();
 

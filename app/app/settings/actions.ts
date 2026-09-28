@@ -8,7 +8,8 @@ import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { firmNameSchema, isId, roleSchema, staffSchema, timeZoneSchema } from "@/lib/validation";
+import { RETENTION_YEARS } from "@/lib/retention";
+import { firmNameSchema, isId, retentionSchema, roleSchema, staffSchema, timeZoneSchema } from "@/lib/validation";
 
 export async function renameFirm(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const staff = await requireAdmin();
@@ -45,6 +46,36 @@ export async function setTimeZone(_prev: ActionResult | null, formData: FormData
   if (!data) return fail(notFound);
 
   revalidatePath("/app", "layout");
+  return { ok: true };
+}
+
+/** How many requests' files a shorter retention period would delete at the next cleanup. */
+export async function previewRetention(years: number): Promise<ActionResult<{ count: number }>> {
+  await requireAdmin();
+  if (!RETENTION_YEARS.some((period) => period === years)) return fail(notFound);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("retention_preview", { years });
+  if (error) return fail(error);
+  return { ok: true, data: { count: data } };
+}
+
+export async function setFileRetention(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const staff = await requireAdmin();
+  const years = retentionSchema.safeParse(formData.get("years"));
+  if (!years.success) return invalid(years.error);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("firms")
+    .update({ file_retention_years: years.data })
+    .eq("id", staff.firmId)
+    .select("id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!data) return fail(notFound);
+
+  revalidatePath("/app/settings");
   return { ok: true };
 }
 

@@ -75,6 +75,7 @@ The plan must justify any other runtime dependency. Item reordering uses up and 
 8. Staff dashboard with two tabs: "Waiting on clients" and "Ready for review".
 9. Downloads: single files for staff and clients, and a zip of a whole request for staff.
 10. Emails and daily jobs (section 11).
+11. Data retention: an admin sets how long files from archived requests are kept, and the daily cleanup job expires them after that period. Account and firm deletion stay manual.
 
 ### Out of scope for v1
 
@@ -82,7 +83,6 @@ The plan must justify any other runtime dependency. Item reordering uses up and 
 - E-signature
 - A questionnaire builder with typed fields or conditional logic
 - OCR or AI document classification
-- Data retention and deletion policies
 - Account or firm deletion (handled manually)
 - Custom branding or domains
 - "Assigned clients only" permissions
@@ -290,7 +290,7 @@ RLS is enabled on every table. A table with no policy for a role grants that rol
 |---|---|---|---|
 | `firms` | select | update | select, via `is_firm_contact(id)` |
 | `firm_members` | select | insert; update and delete only for rows where `user_id` is not the caller | none |
-| `clients` | select, insert, update | none | select, via `is_client_contact(id)` |
+| `clients` | select, insert, update | delete, only for archived clients | select, via `is_client_contact(id)` |
 | `client_contacts` | all | none | none |
 | `templates`, `template_items` | all | none | none |
 | `requests` | select, insert, update; delete only when `status = 'draft'` | none | select when `status <> 'draft'` and `is_client_contact(client_id)` |
@@ -305,7 +305,7 @@ Two guarantees follow from these policies:
 
 ### 8.3 RPCs
 
-Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`, `unarchive_request`, and `template_from_request`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. The first two take the completion rule from `computed_request_status`.
+Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`, `unarchive_request`, `template_from_request`, and `retention_preview`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. The first two take the completion rule from `computed_request_status`.
 
 | Function | Caller | Checks | Effect |
 |---|---|---|---|
@@ -316,6 +316,8 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `refresh_request_status(request_id)` | The trigger | Security invoker, so RLS applies | Recomputes the request status. |
 | `unarchive_request(request_id)` | Staff (for Unarchive) | Security invoker, so RLS applies. The request is `archived`. | Sets `open` or `completed`, whichever the items call for, in one statement, so the timeline records one `unarchived` event. Returns the id, or null when nothing changed. |
 | `template_from_request(request_id)` | Staff (Save as template) | Security invoker, so RLS applies. Not a draft. | Creates a template named after the request, with its items renumbered, and returns its id or null. |
+| `retention_preview(years)` | Firm member (`is_firm_member`); execute revoked from `public` and `anon` | Security invoker, so RLS applies | Returns how many of the firm's archived requests are past the period with files still attached. |
+| `expire_files(max_rows)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Deletes files from archived requests past their firm's retention period, up to `max_rows`, stamps `files_deleted_at` on the touched requests, and logs a `file_removed` event per request. Returns the number of files deleted. |
 | `admin_user_id_by_email(email)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Returns the `auth.users` id. |
 
 Client-facing RPCs raise an exception with one of two messages:

@@ -5,7 +5,7 @@ import { RequestStatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ACTIVITY_LIMIT, actorName, describeEvent, itemLabel } from "@/lib/activity";
 import { requireStaff } from "@/lib/auth";
-import { formatDate, formatDateTime } from "@/lib/dates";
+import { formatDate, formatDateTime, todayIn } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
@@ -30,7 +30,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   const { data: request, error } = await supabase
     .from("requests")
     .select(
-      `id, title, status, due_date, sent_at, client_id, clients(name, archived_at),
+      `id, title, status, due_date, sent_at, client_id, files_deleted_at, clients(name, archived_at),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note,
          unavailable_reason, submitted_at,
          item_files(id, filename, size_bytes, created_at, by_staff))`,
@@ -150,6 +150,13 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           })),
         }))}
       />
+      {request.files_deleted_at && (
+        <p className="text-sm text-muted-foreground">
+          Files were deleted on{" "}
+          {formatDate(todayIn(staff.timeZone, new Date(request.files_deleted_at)))} under the firm&apos;s file
+          retention setting.
+        </p>
+      )}
       <Activity events={activity} olderHidden={olderHidden} />
     </>
   );
