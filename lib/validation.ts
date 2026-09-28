@@ -9,6 +9,15 @@ const text = (label: string, max: number) =>
     .min(1, `${label} is required.`)
     .max(max, `${label} must be ${max.toLocaleString("en-US")} characters or fewer.`);
 
+/** Trimmed optional text: a blank or missing value becomes null instead of an error. */
+const optionalText = (label: string, max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max, `${label} must be ${max.toLocaleString("en-US")} characters or fewer.`)
+    .optional()
+    .transform((value) => value || null);
+
 export const firmNameSchema = text("Firm name", LIMITS.firmName);
 export const personNameSchema = text("Name", LIMITS.name);
 export const emailSchema = z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address."));
@@ -16,6 +25,7 @@ export const reviewNoteSchema = text("Note", LIMITS.reviewNote);
 export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
 export const unavailableReasonSchema = text("Reason", LIMITS.unavailableReason);
 export const filenameSchema = text("File name", LIMITS.filename);
+export const messageSchema = optionalText("Message", LIMITS.message);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 export const roleSchema = z.enum(["admin", "staff"]);
 export const timeZoneSchema = z.string().refine(isTimeZone, "Pick a time zone.");
@@ -77,17 +87,20 @@ export const draftSchema = z.object({
   title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
   items: itemsSchema,
+  message: messageSchema,
 });
 
 export const requestDetailsSchema = z.object({
   title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
+  message: messageSchema,
 });
 
 export const bulkSendSchema = z.object({
   templateId: z.uuid(),
   title: text("Title", LIMITS.name),
   dueDate: dueDateSchema,
+  message: messageSchema,
   clientIds: z
     .array(z.uuid())
     .min(1, "Pick at least one client.")

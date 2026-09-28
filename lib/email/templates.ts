@@ -57,20 +57,22 @@ export function requestSentEmail(input: {
   dueDate: string;
   itemCount: number;
   requestId: string;
+  message?: string | null;
 }): EmailContent {
   const link = siteUrl(`/portal/requests/${input.requestId}`);
   const due = formatDate(input.dueDate);
   const items = input.itemCount === 1 ? "1 item" : `${input.itemCount} items`;
+  const blocks = [
+    `${escapeHtml(input.firmName)} sent you a request: <strong>${escapeHtml(input.title)}</strong>.`,
+    `It has ${items} and is due ${escapeHtml(due)}.`,
+  ];
+  if (input.message) blocks.push(escapeHtml(input.message).replace(/\r?\n/g, "<br>"));
   return {
     subject: subjectLine(`${input.firmName} needs documents from you: ${input.title}`),
-    html: html(
-      [
-        `${escapeHtml(input.firmName)} sent you a request: <strong>${escapeHtml(input.title)}</strong>.`,
-        `It has ${items} and is due ${escapeHtml(due)}.`,
-      ],
-      { href: link, label: "Open the request" },
-    ),
-    text: `${input.firmName} sent you a request: ${input.title}.\nIt has ${items} and is due ${due}.\n\nOpen the request: ${link}`,
+    html: html(blocks, { href: link, label: "Open the request" }),
+    text:
+      `${input.firmName} sent you a request: ${input.title}.\nIt has ${items} and is due ${due}.` +
+      `${input.message ? `\n\n${input.message}` : ""}\n\nOpen the request: ${link}`,
   };
 }
 

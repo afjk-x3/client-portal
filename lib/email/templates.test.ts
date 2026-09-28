@@ -54,6 +54,37 @@ describe("email templates", () => {
     expect(email.text).toContain("due Apr 15, 2027");
   });
 
+  it("puts the request's message between the due date and the link", () => {
+    const email = requestSentEmail({
+      firmName: "Smith & Co",
+      title: "2026 taxes",
+      dueDate: "2027-04-15",
+      itemCount: 2,
+      requestId: "r1",
+      message: "Hi <b>Maria</b>\nPlease upload by the 15th.",
+    });
+    const block = "Hi &lt;b&gt;Maria&lt;/b&gt;<br>Please upload by the 15th.";
+    expect(email.html).toContain(block);
+    expect(email.html.indexOf(block)).toBeGreaterThan(email.html.indexOf("It has 2 items and is due"));
+    expect(email.html.indexOf(block)).toBeLessThan(email.html.indexOf("Open the request"));
+    expect(email.text).toContain("\n\nHi <b>Maria</b>\nPlease upload by the 15th.\n\nOpen the request:");
+  });
+
+  it("leaves the request-sent email exactly as without a message when it is null", () => {
+    const email = requestSentEmail({
+      firmName: "Smith & Co",
+      title: "2026 taxes",
+      dueDate: "2027-04-15",
+      itemCount: 1,
+      requestId: "r1",
+      message: null,
+    });
+    expect(email.text).toBe(
+      "Smith & Co sent you a request: 2026 taxes.\nIt has 1 item and is due Apr 15, 2027.\n\nOpen the request: https://portal.example/portal/requests/r1",
+    );
+    expect(email.html).not.toContain("<p></p>");
+  });
+
   it("marks unavailable items in the digest", () => {
     const email = staffDigestEmail({
       firmName: "Ledger & Co",

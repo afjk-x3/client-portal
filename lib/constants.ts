@@ -17,4 +17,5 @@ export const LIMITS = {
   reviewNote: 1000,
   unavailableReason: 1000,
   filename: 255,
+  message: 2000,
 } as const;
