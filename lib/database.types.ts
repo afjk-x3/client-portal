@@ -363,6 +363,7 @@ export type Database = {
           files_deleted_at: string | null
           firm_id: string
           id: string
+          message: string | null
           sent_at: string | null
           status: string
           title: string
@@ -376,6 +377,7 @@ export type Database = {
           files_deleted_at?: string | null
           firm_id: string
           id?: string
+          message?: string | null
           sent_at?: string | null
           status?: string
           title: string
@@ -389,6 +391,7 @@ export type Database = {
           files_deleted_at?: string | null
           firm_id?: string
           id?: string
+          message?: string | null
           sent_at?: string | null
           status?: string
           title?: string
@@ -564,6 +567,7 @@ export type Database = {
           client_id: string
           due_date: string
           items: Json
+          message?: string
           request_id?: string
           title: string
         }
@@ -577,6 +581,7 @@ export type Database = {
         Args: {
           client_ids: string[]
           due_date: string
+          message?: string
           request_ids: string[]
           template_id: string
           title: string
