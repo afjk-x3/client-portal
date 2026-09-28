@@ -57,7 +57,10 @@ export function readImportRows(records: string[][]): { ok: true; rows: ImportRow
       error: "The first row must name the columns client_name, client_type, contact_name, and contact_email.",
     };
   }
-  const cell = (record: string[], index: number) => (index < 0 ? "" : (record[index] ?? ""));
+  const cell = (record: string[], index: number) => {
+    const value = index < 0 ? "" : (record[index] ?? "");
+    return value.startsWith("'") ? value.slice(1) : value;
+  };
   const rows = records
     .map((record, index) => ({
       row: index + 1,

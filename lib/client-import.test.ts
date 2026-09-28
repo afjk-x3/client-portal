@@ -27,6 +27,26 @@ describe("readImportRows", () => {
     });
   });
 
+  it("drops a leading apostrophe, the spreadsheet's text marker", () => {
+    expect(
+      readImportRows([
+        ["client_name", "client_type", "contact_name", "contact_email"],
+        ["Peña, Ann Ltd", "business", "Ann Peña", "'-ann@example.com"],
+      ]),
+    ).toEqual({
+      ok: true,
+      rows: [
+        {
+          row: 2,
+          clientName: "Peña, Ann Ltd",
+          clientType: "business",
+          contactName: "Ann Peña",
+          contactEmail: "-ann@example.com",
+        },
+      ],
+    });
+  });
+
   it("refuses a file without the required columns, without rows, or with too many", () => {
     expect(readImportRows([["name", "email"], ["Acme", "jo@example.com"]])).toMatchObject({ ok: false });
     expect(readImportRows([["client_name", "contact_name", "contact_email"]])).toEqual({
