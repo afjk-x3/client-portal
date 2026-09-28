@@ -117,6 +117,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
         </div>
         <RequestActions
           requestId={request.id}
+          clientId={request.client_id}
           title={request.title}
           dueDate={request.due_date}
           status={request.status}

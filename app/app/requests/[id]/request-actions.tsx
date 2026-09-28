@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useId, useLayoutEffect, useState } from "react";
-import { BellRing, Download, Plus } from "lucide-react";
+import Link from "next/link";
+import { BellRing, Copy, Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { DatePicker } from "@/components/date-picker";
@@ -27,12 +28,14 @@ import { addItem, sendReminder, setRequestArchived, updateRequestDetails } from 
 /** Header actions for a sent request. */
 export function RequestActions({
   requestId,
+  clientId,
   title,
   dueDate,
   status,
   canRemind,
 }: {
   requestId: string;
+  clientId: string;
   title: string;
   dueDate: string;
   status: string;
@@ -56,6 +59,12 @@ export function RequestActions({
           <Download />
           Download all (.zip)
         </a>
+      </Button>
+      <Button variant="outline" asChild>
+        <Link href={`/app/requests/new?client=${clientId}&from=${requestId}`}>
+          <Copy />
+          Copy
+        </Link>
       </Button>
       <ActionButton
         variant="outline"
