@@ -32,7 +32,7 @@ export async function expectToast(page: Page, text: string | RegExp) {
 
 /** Creates a client from the client list and ends on its page. */
 export async function addClient(page: Page, name: string) {
-  await page.getByRole("link", { name: "Clients" }).click();
+  await page.getByRole("link", { name: "Clients", exact: true }).click();
   await page.getByRole("button", { name: "New client" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Name", exact: true }).fill(name);

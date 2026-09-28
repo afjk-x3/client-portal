@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { addClientWithContact, fillRequest, signUpWithFirm, uniqueEmail } from "./helpers";
+import { addClient, addClientWithContact, fillRequest, signUpWithFirm, uniqueEmail } from "./helpers";
 
 test("copy a sent request", async ({ page }) => {
   const staffEmail = uniqueEmail("staff");
@@ -47,4 +47,29 @@ test("copy a sent request", async ({ page }) => {
   await page.getByRole("link", { name: "New request" }).click();
   await expect(page.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("");
   await expect(page.getByText(/Copy of/)).toHaveCount(0);
+});
+
+test("save a sent request as a template", async ({ page }) => {
+  await signUpWithFirm(page, uniqueEmail("staff"), "Ledger & Co", "Sam Staff");
+  await addClientWithContact(page, "Pat Client", uniqueEmail("contact"));
+
+  await page.getByRole("link", { name: "New request" }).click();
+  await fillRequest(page, "2026 tax documents", "Photo ID");
+  await page.getByRole("button", { name: "Add item" }).click();
+  await page.getByRole("textbox", { name: "Item 2 title" }).fill("Any changes this year?");
+  await page.getByRole("combobox", { name: "Item 2 type" }).click();
+  await page.getByRole("option", { name: "Written answer" }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
+
+  await page.getByRole("button", { name: "Save as template" }).click();
+  await expect(page).toHaveURL(/\/app\/templates\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("2026 tax documents");
+  await expect(page.getByRole("textbox", { name: "Item 1 title" })).toHaveValue("Photo ID");
+  await expect(page.getByRole("textbox", { name: "Item 2 title" })).toHaveValue("Any changes this year?");
+
+  await addClient(page, "Second Client");
+  await page.getByRole("link", { name: "New request" }).click();
+  await page.getByRole("combobox", { name: "Start from" }).click();
+  await expect(page.getByRole("option", { name: "2026 tax documents" })).toBeVisible();
 });

@@ -2,7 +2,7 @@
 
 import { useActionState, useId, useLayoutEffect, useState } from "react";
 import Link from "next/link";
-import { BellRing, Copy, Download, Plus } from "lucide-react";
+import { BellRing, Copy, Download, FilePlus, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { DatePicker } from "@/components/date-picker";
@@ -24,6 +24,7 @@ import { LIMITS } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { submitKeepingValues } from "@/lib/forms";
 import { addItem, sendReminder, setRequestArchived, updateRequestDetails } from "../actions";
+import { saveRequestAsTemplate } from "../../templates/actions";
 
 /** Header actions for a sent request. */
 export function RequestActions({
@@ -66,6 +67,10 @@ export function RequestActions({
           Copy
         </Link>
       </Button>
+      <ActionButton variant="outline" action={() => saveRequestAsTemplate(requestId)}>
+        <FilePlus />
+        Save as template
+      </ActionButton>
       <ActionButton
         variant="outline"
         action={() => setRequestArchived(requestId, !archived)}

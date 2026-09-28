@@ -1,6 +1,6 @@
 # PaperLine
 
-Firms send clients a checklist of documents and questions. Clients sign in with a 6-digit code sent by email, upload files or answer each item, and submit it, or say they don't have a document, with a reason. Staff accept each item or return it with a note. Daily reminders chase open items, and a daily digest tells staff what arrived. Staff can search and filter requests and clients, see each request's activity, and import clients from a CSV file.
+Firms send clients a checklist of documents and questions. Clients sign in with a 6-digit code sent by email, upload files or answer each item, and submit it, or say they don't have a document, with a reason. Staff accept each item or return it with a note. Daily reminders chase open items, and a daily digest tells staff what arrived. Staff can copy a request or save it as a template, search and filter requests and clients, see each request's activity, and import clients from a CSV file.
 
 Design: [`docs/superpowers/specs/2026-09-24-client-portal-design.md`](docs/superpowers/specs/2026-09-24-client-portal-design.md)
 

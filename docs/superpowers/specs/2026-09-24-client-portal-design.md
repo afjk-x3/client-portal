@@ -305,7 +305,7 @@ Two guarantees follow from these policies:
 
 ### 8.3 RPCs
 
-Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status` and `unarchive_request`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. Both take the completion rule from `computed_request_status`.
+Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`, `unarchive_request`, and `template_from_request`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. The first two take the completion rule from `computed_request_status`.
 
 | Function | Caller | Checks | Effect |
 |---|---|---|---|
@@ -315,6 +315,7 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `remove_file(file_id)` | Contact | The same open-item checks | Deletes the row and returns `storage_path`. |
 | `refresh_request_status(request_id)` | The trigger | Security invoker, so RLS applies | Recomputes the request status. |
 | `unarchive_request(request_id)` | Staff (for Unarchive) | Security invoker, so RLS applies. The request is `archived`. | Sets `open` or `completed`, whichever the items call for, in one statement, so the timeline records one `unarchived` event. Returns the id, or null when nothing changed. |
+| `template_from_request(request_id)` | Staff (Save as template) | Security invoker, so RLS applies. Not a draft. | Creates a template named after the request, with its items renumbered, and returns its id or null. |
 | `admin_user_id_by_email(email)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Returns the `auth.users` id. |
 
 Client-facing RPCs raise an exception with one of two messages:

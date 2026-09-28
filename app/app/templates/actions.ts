@@ -58,3 +58,16 @@ export async function deleteTemplate(templateId: string): Promise<ActionResult> 
   revalidatePath("/app/templates");
   redirect("/app/templates");
 }
+
+/** Copies a sent request's items into a new template and opens it for editing. */
+export async function saveRequestAsTemplate(requestId: string): Promise<ActionResult> {
+  await requireStaff();
+  if (!isId(requestId)) return fail(notFound);
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("template_from_request", { request_id: requestId });
+  if (error) return fail(error);
+  if (!data) return fail(notFound);
+
+  revalidatePath("/app/templates");
+  redirect(`/app/templates/${data}`);
+}

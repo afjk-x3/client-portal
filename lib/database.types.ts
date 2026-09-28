@@ -576,6 +576,7 @@ export type Database = {
         Args: { item_id: string; text_answer?: string }
         Returns: undefined
       }
+      template_from_request: { Args: { request_id: string }; Returns: string }
       unarchive_request: { Args: { request_id: string }; Returns: string }
     }
     Enums: {
