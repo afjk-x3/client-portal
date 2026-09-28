@@ -28,7 +28,7 @@ const templates = {
   staffDigest: () =>
     staffDigestEmail({
       firmName: evil,
-      groups: [{ clientName: evil, requestTitle: evil, requestId: "r1", items: [evil] }],
+      groups: [{ clientName: evil, requestTitle: evil, requestId: "r1", items: [{ title: evil, unavailable: false }] }],
     }),
 };
 
@@ -52,6 +52,26 @@ describe("email templates", () => {
     const email = requestSentEmail({ firmName: "Smith & Co", title: "2026 taxes", dueDate: "2027-04-15", itemCount: 2, requestId: "r1" });
     expect(email.html).toContain('href="https://portal.example/portal/requests/r1"');
     expect(email.text).toContain("due Apr 15, 2027");
+  });
+
+  it("marks unavailable items in the digest", () => {
+    const email = staffDigestEmail({
+      firmName: "Ledger & Co",
+      groups: [
+        {
+          clientName: "Pat Client",
+          requestTitle: "2026 tax documents",
+          requestId: "r1",
+          items: [
+            { title: "Bank statement", unavailable: false },
+            { title: "<b>Payslip</b>", unavailable: true },
+          ],
+        },
+      ],
+    });
+    expect(email.html).toContain("<li>Bank statement</li>");
+    expect(email.html).toContain("<li>&lt;b&gt;Payslip&lt;/b&gt; (not available)</li>");
+    expect(email.text).toContain("<b>Payslip</b> (not available)");
   });
 
   it("fails clearly when the site URL is missing", () => {

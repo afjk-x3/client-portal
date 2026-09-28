@@ -125,8 +125,12 @@ export type DigestGroup = {
   clientName: string;
   requestTitle: string;
   requestId: string;
-  items: string[];
+  items: { title: string; unavailable: boolean }[];
 };
+
+function digestLabel(item: { title: string; unavailable: boolean }): string {
+  return `${item.title}${item.unavailable ? " (not available)" : ""}`;
+}
 
 export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[] }): EmailContent {
   const count = input.groups.reduce((sum, group) => sum + group.items.length, 0);
@@ -140,7 +144,7 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
         ...input.groups.flatMap((group) => [
           `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
             `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
-          list(group.items),
+          list(group.items.map(digestLabel)),
         ]),
       ],
       { href: dashboard, label: "Open the dashboard" },
@@ -151,7 +155,7 @@ export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[
         .map(
           (group) =>
             `${group.clientName}: ${group.requestTitle}\n${siteUrl(`/app/requests/${group.requestId}`)}\n` +
-            group.items.map((item) => `- ${item}`).join("\n"),
+            group.items.map((item) => `- ${digestLabel(item)}`).join("\n"),
         )
         .join("\n\n") +
       `\n\nOpen the dashboard: ${dashboard}`,

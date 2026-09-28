@@ -31,7 +31,8 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
     .from("requests")
     .select(
       `id, title, status, due_date, sent_at, client_id, clients(name, archived_at),
-       request_items(id, position, title, description, kind, required, status, text_answer, review_note, submitted_at,
+       request_items(id, position, title, description, kind, required, status, text_answer, review_note,
+         unavailable_reason, submitted_at,
          item_files(id, filename, size_bytes, created_at, by_staff))`,
     )
     .eq("id", id)
@@ -138,6 +139,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           status: item.status,
           textAnswer: item.text_answer,
           reviewNote: item.review_note,
+          unavailableReason: item.unavailable_reason,
           submitted: item.submitted_at ? formatDateTime(item.submitted_at, staff.timeZone) : null,
           files: item.item_files.map((file) => ({
             id: file.id,

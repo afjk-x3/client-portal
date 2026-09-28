@@ -31,7 +31,7 @@ async function Dashboard() {
     // Submitted items of open and completed requests; archived requests are closed.
     supabase
       .from("request_items")
-      .select("id, title, submitted_at, request_id, requests!inner(title, clients(name))")
+      .select("id, title, submitted_at, unavailable_reason, request_id, requests!inner(title, clients(name))")
       .eq("firm_id", staff.firmId)
       .eq("status", "submitted")
       .neq("requests.status", "archived")
@@ -56,6 +56,7 @@ async function Dashboard() {
         client: item.requests.clients?.name ?? "",
         request: item.requests.title,
         item: item.title,
+        unavailable: item.unavailable_reason !== null,
         submitted: item.submitted_at ? formatDateTime(item.submitted_at, staff.timeZone) : "",
       }))}
     />

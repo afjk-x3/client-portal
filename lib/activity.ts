@@ -40,7 +40,7 @@ export function describeEvent(kind: string, detail: Detail, item: string): strin
     case "file_removed":
       return `removed ${quoted(detail.filename)} from ${item}`;
     case "submitted":
-      return `submitted ${item}`;
+      return typeof detail.reason === "string" ? `said they don't have ${item}: ${quoted(detail.reason)}` : `submitted ${item}`;
     case "accepted":
       return `accepted ${item}`;
     case "returned":

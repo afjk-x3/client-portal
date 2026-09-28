@@ -22,6 +22,7 @@ type ReadyRow = {
   client: string;
   request: string;
   item: string;
+  unavailable: boolean;
   /** Formatted on the server in the firm's time zone. */
   submitted: string;
 };
@@ -61,7 +62,16 @@ const readyColumns: DataTableColumn<ReadyRow>[] = [
       </Link>
     ),
   },
-  { accessorKey: "item", header: "Item" },
+  {
+    id: "item",
+    header: "Item",
+    cell: ({ row }) => (
+      <span className="flex items-center gap-2">
+        {row.original.item}
+        {row.original.unavailable && <Badge variant="secondary">Not available</Badge>}
+      </span>
+    ),
+  },
   { accessorKey: "submitted", header: "Submitted" },
 ];
 

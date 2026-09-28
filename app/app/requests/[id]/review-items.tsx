@@ -5,6 +5,7 @@ import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { ItemStatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,7 @@ export type ReviewItem = {
   status: string;
   textAnswer: string | null;
   reviewNote: string | null;
+  unavailableReason: string | null;
   /** Formatted on the server in the firm's time zone. */
   submitted: string | null;
   /** byStaff: added by the firm; staff can remove only these. */
@@ -64,7 +66,10 @@ export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; ed
                   {!item.required && <span className="ml-2 text-xs text-muted-foreground">Optional</span>}
                 </TableCell>
                 <TableCell>
-                  <ItemStatusBadge status={item.status} />
+                  <span className="flex items-center gap-2">
+                    <ItemStatusBadge status={item.status} />
+                    {item.unavailableReason && <Badge variant="secondary">Not available</Badge>}
+                  </span>
                 </TableCell>
                 <TableCell className="text-right">{item.kind === "file" ? item.files.length : "—"}</TableCell>
               </TableRow>
@@ -124,7 +129,15 @@ function ItemDetails({
       {item.kind === "file" && (
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">Files</h3>
-          {item.files.length === 0 && <p className="text-sm text-muted-foreground">No files yet.</p>}
+          {item.files.length === 0 &&
+            (item.unavailableReason ? (
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">The client says they don&apos;t have this</p>
+                <p className="whitespace-pre-wrap text-sm">{item.unavailableReason}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No files yet.</p>
+            ))}
           {item.files.map((file) => (
             <div key={file.id} className="flex items-center justify-between gap-2 text-sm">
               <span className="truncate">

@@ -99,7 +99,7 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
       const items = await readAll((last?: { id: string; submitted_at: string | null }) => {
         const query = admin
           .from("request_items")
-          .select("id, title, request_id, submitted_at, requests!inner(title, clients!inner(name))")
+          .select("id, title, request_id, submitted_at, unavailable_reason, requests!inner(title, clients!inner(name))")
           .eq("firm_id", firm.id)
           .gt("submitted_at", start)
           .lte("submitted_at", now.toISOString())
@@ -121,7 +121,7 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
           requestId: item.request_id,
           items: [],
         };
-        group.items.push(item.title);
+        group.items.push({ title: item.title, unavailable: item.unavailable_reason !== null });
         groups.set(item.request_id, group);
       }
       const content = staffDigestEmail({ firmName: firm.name, groups: [...groups.values()] });

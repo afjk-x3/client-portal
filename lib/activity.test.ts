@@ -5,6 +5,7 @@ describe("describeEvent", () => {
   it.each([
     ["sent", {}, "sent the request"],
     ["submitted", {}, "submitted Photo ID"],
+    ["submitted", { reason: "No account" }, "said they don't have Photo ID: “No account”"],
     ["accepted", {}, "accepted Photo ID"],
     ["file_added", { filename: "scan.pdf", by_staff: false }, "added “scan.pdf” to Photo ID"],
     ["file_removed", { filename: "scan.pdf", by_staff: true }, "removed “scan.pdf” from Photo ID"],
