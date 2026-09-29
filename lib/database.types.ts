@@ -114,6 +114,73 @@ export type Database = {
           },
         ]
       }
+      email_outbox: {
+        Row: {
+          created_at: string
+          failures: number
+          firm_id: string
+          id: number
+          item_id: string | null
+          kind: string
+          recipient: string
+          reply_to_id: string | null
+          request_id: string | null
+          send_after: string
+          window_end: string | null
+          window_start: string | null
+        }
+        Insert: {
+          created_at?: string
+          failures?: number
+          firm_id: string
+          id?: never
+          item_id?: string | null
+          kind: string
+          recipient: string
+          reply_to_id?: string | null
+          request_id?: string | null
+          send_after: string
+          window_end?: string | null
+          window_start?: string | null
+        }
+        Update: {
+          created_at?: string
+          failures?: number
+          firm_id?: string
+          id?: never
+          item_id?: string | null
+          kind?: string
+          recipient?: string
+          reply_to_id?: string | null
+          request_id?: string | null
+          send_after?: string
+          window_end?: string | null
+          window_start?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_outbox_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_outbox_item_id_firm_id_fkey"
+            columns: ["item_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "request_items"
+            referencedColumns: ["id", "firm_id"]
+          },
+          {
+            foreignKeyName: "email_outbox_request_id_firm_id_fkey"
+            columns: ["request_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "requests"
+            referencedColumns: ["id", "firm_id"]
+          },
+        ]
+      }
       firm_members: {
         Row: {
           created_at: string
@@ -536,7 +603,13 @@ export type Database = {
       can_delete_document: { Args: { name: string }; Returns: boolean }
       can_read_document: { Args: { name: string }; Returns: boolean }
       can_write_document: { Args: { name: string }; Returns: boolean }
-      claim_reminder: { Args: { request_id: string }; Returns: boolean }
+      claim_reminder: {
+        Args: { request_id: string }
+        Returns: {
+          email_id: number
+          recipient: string
+        }[]
+      }
       computed_request_status: { Args: { request_id: string }; Returns: string }
       create_firm: {
         Args: { full_name: string; name: string; time_zone?: string }
@@ -599,6 +672,14 @@ export type Database = {
         Args: { max_rows?: number; older_than?: string }
         Returns: string[]
       }
+      queue_request_emails: {
+        Args: { item_id?: string; kind: string; request_id: string }
+        Returns: {
+          email_id: number
+          recipient: string
+        }[]
+      }
+      queue_staff_added: { Args: { user_id: string }; Returns: number }
       refresh_request_status: {
         Args: { request_id: string }
         Returns: undefined
@@ -634,7 +715,11 @@ export type Database = {
           template_id: string
           title: string
         }
-        Returns: undefined
+        Returns: {
+          email_id: number
+          recipient: string
+          request_id: string
+        }[]
       }
       submit_item: {
         Args: { item_id: string; text_answer?: string }

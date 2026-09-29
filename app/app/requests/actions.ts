@@ -147,7 +147,7 @@ export async function sendReminder(requestId: string): Promise<ActionResult<{ co
 
   const { data: claimed, error } = await supabase.rpc("claim_reminder", { request_id: requestId });
   if (error) return fail(error);
-  if (!claimed) return { ok: false, error: "A reminder already went out today." };
+  if (!claimed?.length) return { ok: false, error: "A reminder already went out today." };
 
   after(() => sendEmails(messages));
   return { ok: true, data: { contacts: messages.length } };

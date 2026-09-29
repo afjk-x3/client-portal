@@ -7,8 +7,10 @@ select plan(9);
 update public.firms set time_zone = 'Pacific/Kiritimati' where id = 'f0000000-0000-0000-0000-00000000000a';
 
 select tests.login_as('00000000-0000-0000-0000-0000000000a2', 'staff-a@test.local');
-select is(public.claim_reminder('d0000000-0000-0000-0000-0000000000a1'), true, 'staff claim a reminder for an open request');
-select is(public.claim_reminder('d0000000-0000-0000-0000-0000000000a1'), false, 'but only once a day');
+select is((select count(*) from public.claim_reminder('d0000000-0000-0000-0000-0000000000a1')),
+  1::bigint, 'staff claim a reminder for an open request');
+select is((select count(*) from public.claim_reminder('d0000000-0000-0000-0000-0000000000a1')),
+  0::bigint, 'but only once a day');
 reset role;
 select is((select sent_on from public.notifications_sent where target_id = 'd0000000-0000-0000-0000-0000000000a1'),
   (now() at time zone 'Pacific/Kiritimati')::date, 'the day is the firm''s own');
