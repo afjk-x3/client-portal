@@ -240,6 +240,21 @@ Principles:
 
 Constraint: `unique (kind, target_id, sent_on)`.
 
+**`email_outbox`**: internal table like `notifications_sent`; app roles have no access, only the service role. Rows hold references only, never content.
+
+| Column | Type | Notes |
+|---|---|---|
+| `firm_id` | uuid | references `firms`, on delete cascade |
+| `kind` | text | `request_sent`, `needs_changes`, `reminder`, `staff_added`, or `staff_digest` |
+| `recipient` | text | The address, chosen by the database functions, never passed by a caller |
+| `request_id`, `item_id`, `reply_to_id` | uuid, nullable | Composite FKs to `requests` / `request_items` `(id, firm_id)`, on delete cascade |
+| `window_start`, `window_end` | timestamptz, nullable | The digest window; both required for `staff_digest` |
+| `failures` | smallint | default `0` |
+| `send_after` | timestamptz | When the row becomes claimable; a claim leases it for an hour |
+| `created_at` | timestamptz | default `now()` |
+
+Constraints: a check ties `request_id`, `item_id`, and the window bounds to `kind`, and `unique nulls not distinct (kind, recipient, request_id, item_id, window_end)` keeps one waiting email of each kind per recipient; queuing again replaces the waiting row.
+
 When a template is applied to a request, its items are **copied** into `request_items`. Later edits to the template never change requests that already exist.
 
 ### 7.3 Status rules
@@ -310,6 +325,7 @@ RLS is enabled on every table. A table with no policy for a role grants that rol
 | `item_files` | select | none | select when the parent item is visible to the contact (goes through `request_items` RLS) |
 | `notes` | select, insert; update and delete only for the caller's own notes, and only `body` can be updated | none | none |
 | `notifications_sent` | none | none | none |
+| `email_outbox` | none | none | none |
 
 Two guarantees follow from these policies:
 
@@ -332,6 +348,10 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `retention_preview(years)` | Firm member (`is_firm_member`); execute revoked from `public` and `anon` | Security invoker, so RLS applies | Returns how many of the firm's archived requests are past the period with files still attached. |
 | `expire_files(max_rows)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Deletes files from archived requests past their firm's retention period, up to `max_rows`, stamps `files_deleted_at` on the touched requests, and logs a `file_removed` event per request. Returns the number of files deleted. |
 | `admin_user_id_by_email(email)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Returns the `auth.users` id. |
+| `queue_request_emails(kind, request_id, item_id)` | Staff member of the request's firm | Definer: `is_firm_member`; `request_sent` requires a `draft`, `needs_changes` a submitted or accepted item of an open or completed request, and `reminder` is refused | Queues one outbox row per contact of the client **before** the action changes anything, replacing a waiting row. Returns `(email_id, recipient)`, so the action can send at once. |
+| `queue_staff_added(user_id)` | Admin | Definer: the caller is an admin; a user who already belongs to a firm raises the unique-violation code | Queues the invitation before the membership row exists, then returns the row id. |
+| `claim_due_emails(max_rows)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Leases the oldest due outbox rows for an hour with `for update skip locked`, so no two runs send the same row, and returns them. |
+| `record_email_result(email_id, reason, retry)` | `service_role` only; same revocation | None | Applies one outcome: sent deletes the row (logging `email_sent_late` when it had failed before); a retryable failure with fewer than 3 failures keeps it an hour later; anything else deletes it and logs `email_failed` on the request. |
 
 Client-facing RPCs raise an exception with one of two messages:
 
@@ -542,7 +562,7 @@ The route sets `maxDuration = 300`.
 - **Templates:** plain TypeScript functions that return `{ subject, html, text }`. They HTML-escape every interpolated value.
 - **Sender:** `EMAIL_FROM`, with the display name "{Firm name} via Client Portal".
 - **Links:** absolute URLs built from `NEXT_PUBLIC_SITE_URL`. They point to app pages, never to auth tokens.
-- **Event emails** are sent only when the guarded update actually changed a row. The Server Action gathers all the data it needs; `after()` only sends. A failed send is logged and never shown to the user.
+- **Event emails** are queued in `email_outbox` (§7.2) through §8.3's functions **before the action changes anything**; the queue doubles as validation, so a rejected call raises the usual `not_allowed` or `invalid_state` error and changes nothing. The Server Action gathers all the data it needs; `after()` sends the queued rows at once and `record_email_result` deletes each row it sends. A failed send is logged as an `email_failed` Activity event, stays in the outbox, and goes out in a later daily run (§11.2).
 
 | Email | Trigger | Recipients | Content | Reply-to |
 |---|---|---|---|---|
@@ -570,7 +590,7 @@ The route sets `maxDuration = 300`.
    returning id
    ```
 
-3. If the claim returns a row, queue one email per contact.
+3. If the claim returns a row, queue one outbox email per contact.
 
 **`reminderDue`** (pure function in `lib/reminders.ts`). Let `d` be `dueDate − today` in days.
 
@@ -583,13 +603,14 @@ The route sets `maxDuration = 300`.
 1. The window starts at the `created_at` of their latest earlier `staff_digest` claim, or 24 hours ago if there is none. Because of this, a missed day is covered by the next run.
 2. Select items in their firm with `submitted_at` in the window.
 3. If there are none, skip the member without claiming.
-4. Otherwise claim `('staff_digest', user_id, today)`, then queue the email.
+4. Otherwise claim `('staff_digest', user_id, today)`, then queue an outbox row.
 
 **Delivery.**
 
-- Queued emails are sent with `resend.batch.send`, at most 100 emails per call, to stay within Resend's API rate limit.
-- A failed send is logged and its claim stays in place. Delivery is therefore at most once per day.
-- Each firm is processed inside its own try/catch block. The route logs a JSON summary of the counts.
+- After each firm's claims, its outbox rows are upserted with `failures = 0` and `send_after = now`, replacing any waiting row of the same kind.
+- `sendDueEmails` then loops: `claim_due_emails(100)` leases due rows for an hour, `renderQueued` rebuilds each email from current data (a row whose request is no longer open, was archived, is already covered, or whose recipient left the firm maps to null and is deleted unsent as `dropped`), messages go out with `resend.batch.send` at most 100 per call, and `record_email_result` records each outcome — until a claim returns nothing.
+- A failed send keeps its row for an hour, up to 3 failures; then it is dropped with an `email_failed` event (`outcome` `retrying`, `gave_up`, or `failed`). A row that succeeds after an earlier failure logs `email_sent_late`. An email is therefore sent at most once, and retries happen in later runs.
+- Each firm is processed inside its own try/catch block. A database error in the send loop stops it and sets `outboxFailed`. The route logs a JSON summary of the counts; it returns an error status when any firm failed, the send loop errored, or any row ended retrying or gave up.
 
 ## 12. Error handling
 
@@ -719,7 +740,6 @@ Each ceiling is marked in code with a `ponytail:` comment that names the upgrade
 | The daily job runs once, at 01:00 UTC (9 am in UTC+8), so firms in other time zones get their emails at other local hours. (Dates follow each firm's time zone since `firms.time_zone`.) | Run the job hourly (Vercel Pro) and send at a set local hour per firm. |
 | A staff user can belong to only one firm. | Drop the unique `user_id` constraint and add a firm switcher. |
 | Zip size is limited by the 300-second function duration. | Download files individually, or build zips in a background job. |
-| A failed send is tried up to 3 times within the run; an email that still fails, or never starts because the run hits its 300-second limit, is lost after its claim. | An outbox that the next run sends again. |
 | Optional items lock when a request completes. | Allow optional submissions on completed requests. |
 | The MIME type is the declared type only, and files are not virus-scanned. | Add a scanning step before `register_file`. |
 | Either side can delete the other side's upload before it is registered. | An `owner_id` check in the delete policy, with `removeFile` deleting the object through the service role. |

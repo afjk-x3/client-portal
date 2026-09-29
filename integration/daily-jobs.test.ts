@@ -4,7 +4,7 @@ import { createClient, type PostgrestError } from "@supabase/supabase-js";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { runDailyJobs } from "@/lib/daily-jobs";
 import type { Database } from "@/lib/database.types";
-import type { EmailMessage } from "@/lib/email/send";
+import type { EmailMessage, EmailOutcome } from "@/lib/email/send";
 
 vi.mock("server-only", () => ({}));
 const { outbox } = vi.hoisted(() => ({ outbox: [] as EmailMessage[] }));
@@ -12,7 +12,8 @@ vi.mock("@/lib/email/send", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email/send")>()),
   sendEmails: async (messages: EmailMessage[]) => {
     outbox.push(...messages);
-    return { sent: messages.length, failed: 0 };
+    const results = messages.map((): EmailOutcome => ({ ok: true }));
+    return { sent: messages.length, failed: 0, results };
   },
 }));
 
@@ -304,12 +305,16 @@ it("starts a digest window at the previous digest, or 24 hours back for a new me
   }
 }, 120_000);
 
-it("claims nothing when emails cannot be built or sent", async () => {
+it("reports an unbuildable email as an outbox failure, and refuses to run without a sender", async () => {
   const dueDay = hoursFromStart(7 * 24); // due7 and the bulk requests are due that day
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
   delete process.env.NEXT_PUBLIC_SITE_URL;
   try {
-    expect((await runDailyJobs(admin, dueDay)).failedFirms).toBeGreaterThanOrEqual(2);
+    const summary = await runDailyJobs(admin, dueDay);
+    expect(summary.outboxFailed).toBe(true);
+    // The broken run claimed and leased the rows; the next day's claims would
+    // replace them. Stand in for that day by making them due again.
+    await rows(admin.from("email_outbox").update({ send_after: new Date(0).toISOString() }).gte("id", 0).select("id"));
   } finally {
     process.env.NEXT_PUBLIC_SITE_URL = siteUrl;
   }

@@ -1,32 +1,34 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { isOverdue, todayIn } from "@/lib/dates";
-import { EMAIL_BATCH_SIZE, emailConfigError, sendEmails, type EmailMessage } from "@/lib/email/send";
-import { reminderEmail, staffDigestEmail, type DigestGroup } from "@/lib/email/templates";
+import { todayIn } from "@/lib/dates";
+import { emailConfigError } from "@/lib/email/send";
+import { sendDueEmails, type OutboxSummary } from "@/lib/email/outbox";
 import { reminderDue } from "@/lib/reminders";
 import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
 
 type Admin = SupabaseClient<Database>;
 type Firm = { id: string; name: string; time_zone: string };
 type Member = { user_id: string; email: string; created_at: string };
-/** The emails to send if this run wins today's (kind, target) claim. */
-type Notification = { kind: "reminder" | "staff_digest"; targetId: string; emails: EmailMessage[] };
+/** One outbox row to queue if this run wins today's (kind, target) claim. */
+type Queued = Omit<Database["public"]["Tables"]["email_outbox"]["Insert"], "send_after" | "failures">;
+/** The emails to queue if this run wins today's (kind, target) claim. */
+type Notification = { kind: "reminder" | "staff_digest"; targetId: string; rows: Queued[] };
 
 export type DailySummary = {
   firms: number;
   failedFirms: number;
   reminders: number;
   digests: number;
-  sent: number;
-  failed: number;
+  outbox: OutboxSummary;
+  outboxFailed: boolean;
 };
 
 const FIRM_CONCURRENCY = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Open requests of active clients that have open items and a reminder day today. */
-async function reminders(admin: Admin, firm: Firm, members: Member[], today: string): Promise<Notification[]> {
+async function reminders(admin: Admin, firm: Firm, today: string): Promise<Notification[]> {
   const requests = await readAll((last?: { id: string }) =>
     admin
       .from("requests")
@@ -48,20 +50,17 @@ async function reminders(admin: Admin, firm: Firm, members: Member[], today: str
     const contacts = request.clients.client_contacts;
     if (!reminderDue({ dueDate: request.due_date, sentOn, today }) || contacts.length === 0) return [];
 
-    const content = reminderEmail({
-      firmName: firm.name,
-      title: request.title,
-      dueDate: request.due_date,
-      overdue: isOverdue(request.due_date, today),
-      openItems: request.request_items.map((item) => item.title),
-      requestId: request.id,
-    });
-    const replyTo = members.find((m) => m.user_id === request.created_by)?.email;
     return [
       {
         kind: "reminder",
         targetId: request.id,
-        emails: contacts.map((contact) => ({ ...content, to: contact.email, fromName: firm.name, replyTo })),
+        rows: contacts.map((contact) => ({
+          firm_id: firm.id,
+          kind: "reminder",
+          recipient: contact.email,
+          request_id: request.id,
+          reply_to_id: request.created_by ?? null,
+        })),
       },
     ];
   });
@@ -92,14 +91,14 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
     }),
   );
 
-  // Members whose windows start together (usually all of them) share one query and one email.
+  // Members whose windows start together (usually all of them) share one query.
   const windows = Map.groupBy(members, (_member, index) => starts[index]);
   const results = await Promise.all(
     [...windows].map(async ([start, windowMembers]) => {
       const items = await readAll((last?: { id: string; submitted_at: string | null }) => {
         const query = admin
           .from("request_items")
-          .select("id, title, request_id, submitted_at, unavailable_reason, requests!inner(title, clients!inner(name))")
+          .select("id, submitted_at")
           .eq("firm_id", firm.id)
           .gt("submitted_at", start)
           .lte("submitted_at", now.toISOString())
@@ -113,23 +112,19 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
       });
       if (items.length === 0) return [];
 
-      const groups = new Map<string, DigestGroup>();
-      for (const item of items) {
-        const group = groups.get(item.request_id) ?? {
-          clientName: item.requests.clients.name,
-          requestTitle: item.requests.title,
-          requestId: item.request_id,
-          items: [],
-        };
-        group.items.push({ title: item.title, unavailable: item.unavailable_reason !== null });
-        groups.set(item.request_id, group);
-      }
-      const content = staffDigestEmail({ firmName: firm.name, groups: [...groups.values()] });
       return windowMembers.map(
         (member): Notification => ({
           kind: "staff_digest",
           targetId: member.user_id,
-          emails: [{ ...content, to: member.email, fromName: firm.name }],
+          rows: [
+            {
+              firm_id: firm.id,
+              kind: "staff_digest",
+              recipient: member.email,
+              window_start: start,
+              window_end: now.toISOString(),
+            },
+          ],
         }),
       );
     }),
@@ -141,9 +136,6 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
  * Claims today's (kind, target) rows in notifications_sent in one statement
  * and returns the notifications this run won, so each goes out at most once
  * per day. created_at is the run's time, where the next digest window starts.
- * ponytail: sendEmails tries a failed send up to 3 times within the run. An email
- * that still fails, or never starts because the run hits its 300-second limit, is
- * lost after its claim. Upgrade path: an outbox that the next run sends again.
  */
 async function claim(admin: Admin, notifications: Notification[], today: string, now: Date): Promise<Notification[]> {
   if (notifications.length === 0) return [];
@@ -160,8 +152,10 @@ async function claim(admin: Admin, notifications: Notification[], today: string,
 }
 
 /**
- * A firm's reminders and digests, built in full before they are claimed so an
- * error cannot use up today's claims. "Today" is the date in the firm's time zone.
+ * A firm's reminders and digests, decided before they are claimed so an error
+ * cannot use up today's claims. The won notifications are queued in the outbox,
+ * due at once; a queueing error fails the firm, as a read error does.
+ * "Today" is the date in the firm's time zone.
  */
 async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notification[]> {
   const today = todayIn(firm.time_zone, now);
@@ -175,14 +169,26 @@ async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notificat
       .limit(PAGE_SIZE),
   );
   const [due, digest] = await Promise.all([
-    reminders(admin, firm, members, today),
+    reminders(admin, firm, today),
     digests(admin, firm, members, today, now),
   ]);
-  return claim(admin, [...due, ...digest], today, now);
+  const won = await claim(admin, [...due, ...digest], today, now);
+  const rows = won
+    .flatMap((notification) => notification.rows)
+    .map((row) => ({ ...row, failures: 0, send_after: new Date().toISOString() }));
+  if (rows.length > 0) {
+    // Replaces a reminder still waiting, so it goes out once with the new send time.
+    const { error } = await admin
+      .from("email_outbox")
+      .upsert(rows, { onConflict: "kind,recipient,request_id,item_id,window_end" });
+    if (error) throw error;
+  }
+  return won;
 }
 
 /**
- * Reminders and staff digests for every firm. Each firm is isolated in its own try/catch.
+ * Reminders and staff digests for every firm, then the outbox's due emails.
+ * Each firm is isolated in its own try/catch; an outbox failure fails the run.
  * ponytail: the job runs once a day at 01:00 UTC (vercel.json), 9 am in UTC+8, so
  * firms in other time zones get their emails at other local hours. Upgrade path:
  * run hourly (Vercel Pro) and send at a set local hour per firm.
@@ -192,22 +198,17 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
   const configError = emailConfigError();
   if (configError) throw new Error(`Daily jobs not run: ${configError}`);
 
-  const summary: DailySummary = { firms: 0, failedFirms: 0, reminders: 0, digests: 0, sent: 0, failed: 0 };
+  const summary: DailySummary = {
+    firms: 0,
+    failedFirms: 0,
+    reminders: 0,
+    digests: 0,
+    outbox: { sent: 0, retrying: 0, gaveUp: 0, dropped: 0 },
+    outboxFailed: false,
+  };
   const firms = await readAll((last?: { id: string }) =>
     admin.from("firms").select("id, name, time_zone").gt("id", last?.id ?? NIL_UUID).order("id").limit(PAGE_SIZE),
   );
-
-  // Full batches go out while firms are still processed, so a run cut short loses little.
-  const queue: EmailMessage[] = [];
-  const sends: Promise<void>[] = [];
-  function send(emails: EmailMessage[]) {
-    sends.push(
-      sendEmails(emails).then((result) => {
-        summary.sent += result.sent;
-        summary.failed += result.failed;
-      }),
-    );
-  }
 
   let next = 0;
   async function worker() {
@@ -217,18 +218,21 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
         for (const notification of await claimFirm(admin, firm, now)) {
           if (notification.kind === "reminder") summary.reminders++;
           else summary.digests++;
-          queue.push(...notification.emails);
         }
         summary.firms++;
       } catch (err) {
         summary.failedFirms++;
         console.error(`Daily jobs failed for firm ${firm.id}`, err);
       }
-      while (queue.length >= EMAIL_BATCH_SIZE) send(queue.splice(0, EMAIL_BATCH_SIZE));
     }
   }
   await Promise.all(Array.from({ length: FIRM_CONCURRENCY }, worker));
-  if (queue.length > 0) send(queue);
-  await Promise.all(sends);
+
+  try {
+    summary.outbox = await sendDueEmails(admin, now);
+  } catch (err) {
+    summary.outboxFailed = true;
+    console.error("The outbox failed", err);
+  }
   return summary;
 }

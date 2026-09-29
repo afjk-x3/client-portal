@@ -144,11 +144,14 @@ Every trigger function is `security definer` with `set search_path = ''`, and `e
 | `unarchived` | a request's status leaves archived | none |
 | `completed` | a request's status changes from open to completed | none |
 | `reopened` | a request's status changes from completed to open | none |
+| `email_failed` | a request's outbox email fails to send | `email` (the kind), `to`, `reason` (truncated to 200 characters), `outcome` (`retrying`, `gave_up`, or `failed`) |
+| `email_sent_late` | an outbox email that had failed before finally sends | `email` (the kind), `to` |
 
 - `actor_id` is `auth.uid()`. It is null for the daily job, which uses the service role.
 - The item triggers are named so they run before `request_items_refresh_status`: an item's event is written before the request's `completed` or `reopened` event that it causes.
 - Delete triggers skip logging when the parent request no longer exists, so cascading deletes (a firm deleted by hand) never fail.
 - Bulk send inserts items while its requests are still drafts, so it logs one `sent` event per request and no `item_added` events.
+- `email_failed` and `email_sent_late` are written by `record_email_result`, a security definer RPC, not by a trigger. They appear only for emails tied to a request, so digest and staff-invitation failures stay in the daily logs.
 
 ### 4.3 Screen
 
