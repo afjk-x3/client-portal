@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { archiveRequestsSchema, messageSchema, unavailableReasonSchema } from "@/lib/validation";
+import { archiveRequestsSchema, messageSchema, noteSchema, unavailableReasonSchema } from "@/lib/validation";
+
+describe("noteSchema", () => {
+  it("trims the note", () => {
+    expect(noteSchema.parse("  Called Pat.  ")).toBe("Called Pat.");
+  });
+  it("refuses a blank note", () => {
+    expect(noteSchema.safeParse("   ").error?.issues[0].message).toBe("Note is required.");
+  });
+  it("refuses 2,001 characters", () => {
+    expect(noteSchema.safeParse("x".repeat(2001)).error?.issues[0].message).toBe(
+      "Note must be 2,000 characters or fewer.",
+    );
+  });
+});
+
 
 describe("unavailableReasonSchema", () => {
   it("trims the reason", () => {

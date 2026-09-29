@@ -9,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { requireStaff } from "@/lib/auth";
-import { formatDate, todayIn } from "@/lib/dates";
+import { formatDate, formatDateTime, todayIn } from "@/lib/dates";
+import { NOTES_LIMIT, noteAuthor } from "@/lib/notes";
 import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
+import { Notes } from "../../notes/notes";
 import { ClientFormDialog } from "../client-form-dialog";
 import { setClientArchived, updateClient } from "./actions";
 import { ClientFiles } from "./client-files";
@@ -32,7 +34,7 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
   if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [clientResult, contacts, requests, members, fileRows] = await Promise.all([
+  const [clientResult, contacts, requests, members, noteRows, fileRows] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, kind, owner_id, archived_at")
@@ -52,6 +54,15 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
       .eq("firm_id", staff.firmId)
       .order("created_at", { ascending: false }),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId).order("full_name"),
+    // The client's own notes and its requests' notes together, newest first.
+    supabase
+      .from("notes")
+      .select("id, author_id, body, created_at, updated_at, request:requests(id, title)")
+      .eq("client_id", id)
+      .eq("firm_id", staff.firmId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(NOTES_LIMIT + 1),
     // Every file, archived requests included: only client_id scopes it, never the request status.
     readAll((last?: { id: string }) =>
       supabase
@@ -70,6 +81,7 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
   if (contacts.error) throw contacts.error;
   if (requests.error) throw requests.error;
   if (members.error) throw members.error;
+  if (noteRows.error) throw noteRows.error;
   const client = clientResult.data;
   if (!client) notFound();
 
@@ -83,6 +95,18 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
     requestId: row.request_items.requests.id,
     requestTitle: row.request_items.requests.title,
     itemTitle: row.request_items.title,
+  }));
+
+  const noteNames = new Map(members.data.map((member) => [member.user_id, member.full_name] as const));
+  const notesOlderHidden = noteRows.data.length > NOTES_LIMIT;
+  const notes = noteRows.data.slice(0, NOTES_LIMIT).map((row) => ({
+    id: row.id,
+    author: noteAuthor(row.author_id, noteNames),
+    at: formatDateTime(row.created_at, staff.timeZone),
+    edited: row.updated_at !== null,
+    body: row.body,
+    own: row.author_id === staff.userId,
+    request: row.request,
   }));
 
   const memberList = members.data.map((m) => ({ userId: m.user_id, fullName: m.full_name }));
@@ -160,6 +184,8 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
       </div>
 
       <ClientFiles files={files} />
+
+      <Notes notes={notes} clientId={id} requestId={null} olderHidden={notesOlderHidden} />
     </>
   );
 }

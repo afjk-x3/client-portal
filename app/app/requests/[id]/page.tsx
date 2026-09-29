@@ -7,8 +7,10 @@ import { ACTIVITY_LIMIT, actorName, describeEvent, itemLabel } from "@/lib/activ
 import { requireStaff } from "@/lib/auth";
 import { formatDate, formatDateTime, todayIn } from "@/lib/dates";
 import { newEditorItem } from "@/lib/editor-items";
+import { NOTES_LIMIT, noteAuthor } from "@/lib/notes";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
+import { Notes } from "../../notes/notes";
 import { RequestEditor } from "../request-editor";
 import { Activity } from "./activity";
 import { RequestActions } from "./request-actions";
@@ -27,22 +29,49 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const { data: request, error } = await supabase
-    .from("requests")
-    .select(
-      `id, title, status, due_date, sent_at, message, client_id, files_deleted_at, clients(name, archived_at),
-       request_items(id, position, title, description, kind, required, status, text_answer, review_note,
-         unavailable_reason, submitted_at,
-         item_files(id, filename, size_bytes, created_at, by_staff))`,
-    )
-    .eq("id", id)
-    .eq("firm_id", staff.firmId)
-    .order("position", { referencedTable: "request_items" })
-    .order("id", { referencedTable: "request_items" })
-    .order("created_at", { referencedTable: "request_items.item_files" })
-    .maybeSingle();
-  if (error) throw error;
+  const [requestResult, members, noteRows] = await Promise.all([
+    supabase
+      .from("requests")
+      .select(
+        `id, title, status, due_date, sent_at, message, client_id, files_deleted_at, clients(name, archived_at),
+         request_items(id, position, title, description, kind, required, status, text_answer, review_note,
+           unavailable_reason, submitted_at,
+           item_files(id, filename, size_bytes, created_at, by_staff))`,
+      )
+      .eq("id", id)
+      .eq("firm_id", staff.firmId)
+      .order("position", { referencedTable: "request_items" })
+      .order("id", { referencedTable: "request_items" })
+      .order("created_at", { referencedTable: "request_items.item_files" })
+      .maybeSingle(),
+    supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId),
+    supabase
+      .from("notes")
+      .select("id, author_id, body, created_at, updated_at")
+      .eq("request_id", id)
+      .eq("firm_id", staff.firmId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      // One more than shown, to tell whether older notes exist.
+      .limit(NOTES_LIMIT + 1),
+  ]);
+  if (requestResult.error) throw requestResult.error;
+  if (members.error) throw members.error;
+  if (noteRows.error) throw noteRows.error;
+  const request = requestResult.data;
   if (!request) notFound();
+
+  const memberNames = new Map(members.data.map((member) => [member.user_id, member.full_name] as const));
+  const notesOlderHidden = noteRows.data.length > NOTES_LIMIT;
+  const notes = noteRows.data.slice(0, NOTES_LIMIT).map((note) => ({
+    id: note.id,
+    author: noteAuthor(note.author_id, memberNames),
+    at: formatDateTime(note.created_at, staff.timeZone),
+    edited: note.updated_at !== null,
+    body: note.body,
+    own: note.author_id === staff.userId,
+    request: null,
+  }));
 
   const clientLink = (
     <Link className="underline-offset-4 hover:underline" href={`/app/clients/${request.client_id}`}>
@@ -69,11 +98,12 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
             message: request.message ?? "",
           }}
         />
+        <Notes notes={notes} clientId={request.client_id} requestId={request.id} olderHidden={notesOlderHidden} />
       </>
     );
   }
 
-  const [events, members, contacts] = await Promise.all([
+  const [events, contacts] = await Promise.all([
     supabase
       .from("request_events")
       .select("id, kind, item_id, actor_id, detail, created_at")
@@ -81,11 +111,9 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
       .order("id", { ascending: false })
       // One more than shown, to tell whether older events exist.
       .limit(ACTIVITY_LIMIT + 1),
-    supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId),
     supabase.from("client_contacts").select("user_id, full_name").eq("client_id", request.client_id),
   ]);
   if (events.error) throw events.error;
-  if (members.error) throw members.error;
   if (contacts.error) throw contacts.error;
   // Staff names win for a user who is also this client's contact.
   const names = new Map([
@@ -159,6 +187,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           retention setting.
         </p>
       )}
+      <Notes notes={notes} clientId={request.client_id} requestId={request.id} olderHidden={notesOlderHidden} />
       <Activity events={activity} olderHidden={olderHidden} />
     </>
   );

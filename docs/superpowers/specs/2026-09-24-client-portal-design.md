@@ -219,6 +219,17 @@ Principles:
 | `mime` | text | Read from Storage metadata |
 | `uploaded_by` | uuid, nullable | references `auth.users`, on delete set null |
 
+**`notes`**: index `(client_id, created_at)` and `(request_id, created_at)`
+
+| Column | Type | Notes |
+|---|---|---|
+| `firm_id`, `client_id` | uuid | FK `(client_id, firm_id)` to `clients`, on delete cascade |
+| `request_id` | uuid, nullable | null for a client note; FK `(request_id, client_id)` to `requests (id, client_id)`, on delete cascade (`requests` is `unique (id, client_id)`), so a note stays on its own client's request |
+| `author_id` | uuid | default `auth.uid()`; no foreign key: a note outlives its author |
+| `body` | text | 1 to 2,000 characters, line breaks kept |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz, nullable | null until the first edit; a `before update` trigger sets it |
+
 **`notifications_sent`**: internal table with no `firm_id`; only the service role can access it.
 
 | Column | Type | Notes |
@@ -297,6 +308,7 @@ RLS is enabled on every table. A table with no policy for a role grants that rol
 | `requests` | select, insert, update; delete only when `status = 'draft'` | none | select when `status <> 'draft'` and `is_client_contact(client_id)` |
 | `request_items` | all | none | select when the parent request is visible to the contact (the policy subquery on `requests` goes through `requests` RLS) |
 | `item_files` | select | none | select when the parent item is visible to the contact (goes through `request_items` RLS) |
+| `notes` | select, insert; update and delete only for the caller's own notes, and only `body` can be updated | none | none |
 | `notifications_sent` | none | none | none |
 
 Two guarantees follow from these policies:
