@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageSchema, unavailableReasonSchema } from "@/lib/validation";
+import { archiveRequestsSchema, messageSchema, unavailableReasonSchema } from "@/lib/validation";
 
 describe("unavailableReasonSchema", () => {
   it("trims the reason", () => {
@@ -27,5 +27,24 @@ describe("messageSchema", () => {
     expect(messageSchema.safeParse("x".repeat(2001)).error?.issues[0].message).toBe(
       "Message must be 2,000 characters or fewer.",
     );
+  });
+});
+
+describe("archiveRequestsSchema", () => {
+  const ids = (count: number) =>
+    Array.from({ length: count }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+
+  it("accepts one and fifty ids", () => {
+    expect(archiveRequestsSchema.safeParse(ids(1)).success).toBe(true);
+    expect(archiveRequestsSchema.safeParse(ids(50)).success).toBe(true);
+  });
+  it("refuses an empty list, 51 ids, and a malformed id", () => {
+    expect(archiveRequestsSchema.safeParse([]).success).toBe(false);
+    expect(archiveRequestsSchema.safeParse(ids(51)).success).toBe(false);
+    expect(archiveRequestsSchema.safeParse(["not-an-id"]).success).toBe(false);
+  });
+  it("keeps one of each repeated id", () => {
+    const [first] = ids(1);
+    expect(archiveRequestsSchema.parse([first, first])).toEqual([first]);
   });
 });

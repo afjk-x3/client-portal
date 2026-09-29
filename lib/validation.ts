@@ -114,4 +114,10 @@ export const templateSchema = z.object({
   items: itemsSchema,
 });
 
+export const archiveRequestsSchema = z
+  .array(z.uuid())
+  .min(1, "Pick at least one request.")
+  .max(50, "Archive at most 50 requests at a time.")
+  .transform((ids) => [...new Set(ids)]);
+
 export type ItemInput = z.input<typeof itemSchema>;

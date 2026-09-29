@@ -11,7 +11,15 @@ import { emailConfigError, sendEmails } from "@/lib/email/send";
 import { needsChangesEmail, reminderEmail, requestSentEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
-import { bulkSendSchema, draftSchema, isId, itemSchema, requestDetailsSchema, reviewNoteSchema } from "@/lib/validation";
+import {
+  archiveRequestsSchema,
+  bulkSendSchema,
+  draftSchema,
+  isId,
+  itemSchema,
+  requestDetailsSchema,
+  reviewNoteSchema,
+} from "@/lib/validation";
 
 /**
  * Creates a draft, or replaces a draft's fields and items, in one transaction
@@ -414,4 +422,25 @@ export async function setRequestArchived(requestId: string, archived: boolean): 
 
   revalidatePath(`/app/requests/${requestId}`);
   return { ok: true };
+}
+
+/** Same effect as archiving each request: one guarded update under RLS. */
+export async function archiveRequests(requestIds: string[]): Promise<ActionResult<{ archived: number }>> {
+  const staff = await requireStaff();
+  const parsed = archiveRequestsSchema.safeParse(requestIds);
+  if (!parsed.success) return fail(notFound);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("requests")
+    .update({ status: "archived" })
+    .in("id", parsed.data)
+    .eq("firm_id", staff.firmId)
+    .in("status", ["open", "completed"])
+    .select("id");
+  if (error) return fail(error);
+  if (data.length === 0) return fail(staleState);
+
+  revalidatePath("/app/requests");
+  return { ok: true, data: { archived: data.length } };
 }
