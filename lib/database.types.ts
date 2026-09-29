@@ -603,6 +603,29 @@ export type Database = {
       can_delete_document: { Args: { name: string }; Returns: boolean }
       can_read_document: { Args: { name: string }; Returns: boolean }
       can_write_document: { Args: { name: string }; Returns: boolean }
+      claim_due_emails: {
+        Args: { max_rows?: number }
+        Returns: {
+          created_at: string
+          failures: number
+          firm_id: string
+          id: number
+          item_id: string | null
+          kind: string
+          recipient: string
+          reply_to_id: string | null
+          request_id: string | null
+          send_after: string
+          window_end: string | null
+          window_start: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "email_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_reminder: {
         Args: { request_id: string }
         Returns: {
@@ -680,6 +703,10 @@ export type Database = {
         }[]
       }
       queue_staff_added: { Args: { user_id: string }; Returns: number }
+      record_email_result: {
+        Args: { email_id: number; reason?: string; retry?: boolean }
+        Returns: undefined
+      }
       refresh_request_status: {
         Args: { request_id: string }
         Returns: undefined

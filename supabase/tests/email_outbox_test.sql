@@ -4,6 +4,8 @@
 begin;
 select plan(23);
 \ir fixtures/seed.psql
+-- Earlier runs (a browser test, say) may have left waiting rows behind.
+delete from public.email_outbox;
 
 -- Staff, contacts, and anon can neither read nor write the table.
 select tests.login_as('00000000-0000-0000-0000-0000000000a1', 'admin-a@test.local');

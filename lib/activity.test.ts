@@ -27,6 +27,35 @@ describe("describeEvent", () => {
       describeEvent("details_changed", { title: ["2026 taxes", "2027 taxes"], due_date: ["2027-03-05", "2027-03-12"] }, ""),
     ).toBe("changed the title from “2026 taxes” to “2027 taxes” and changed the due date from Mar 5, 2027 to Mar 12, 2027");
   });
+
+  it("describes failed and late emails", () => {
+    expect(
+      describeEvent(
+        "email_failed",
+        { email: "reminder", to: "maria@example.com", reason: "daily sending limit reached", outcome: "retrying" },
+        "",
+      ),
+    ).toBe("couldn't send the reminder to maria@example.com (daily sending limit reached). Trying again tomorrow.");
+    expect(
+      describeEvent(
+        "email_failed",
+        { email: "request_sent", to: "maria@example.com", reason: "daily sending limit reached", outcome: "gave_up" },
+        "",
+      ),
+    ).toBe("gave up on the request email to maria@example.com after 3 days (daily sending limit reached).");
+    expect(
+      describeEvent(
+        "email_failed",
+        { email: "needs_changes", to: "maria@example.com", reason: "550 5.1.1 unknown", outcome: "failed" },
+        "Photo ID",
+      ),
+    ).toBe(
+      "couldn't send the changes-needed email for “Photo ID” to maria@example.com (550 5.1.1 unknown). It won't be tried again.",
+    );
+    expect(describeEvent("email_sent_late", { email: "reminder", to: "maria@example.com" }, "")).toBe(
+      "sent the reminder to maria@example.com after an earlier failure.",
+    );
+  });
 });
 
 describe("itemLabel", () => {

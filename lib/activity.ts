@@ -18,6 +18,14 @@ export function itemLabel(itemId: string | null, detail: Detail, titles: Readonl
   return (itemId && titles.get(itemId)) || (typeof detail.title === "string" ? detail.title : "an item");
 }
 
+/** What the email events call the message: "the changes-needed email for “Photo ID”". */
+function emailLabel(email: unknown, item: string): string {
+  if (email === "request_sent") return "the request email";
+  if (email === "needs_changes") return `the changes-needed email for ${quoted(item)}`;
+  if (email === "reminder") return "the reminder";
+  return String(email);
+}
+
 /** What happened, after the actor's name: "accepted Photo ID". */
 export function describeEvent(kind: string, detail: Detail, item: string): string {
   switch (kind) {
@@ -55,6 +63,16 @@ export function describeEvent(kind: string, detail: Detail, item: string): strin
       return "completed the request";
     case "reopened":
       return "reopened the request";
+    case "email_failed": {
+      const label = emailLabel(detail.email, item);
+      const to = String(detail.to);
+      const reason = String(detail.reason);
+      if (detail.outcome === "gave_up") return `gave up on ${label} to ${to} after 3 days (${reason}).`;
+      const tail = detail.outcome === "retrying" ? " Trying again tomorrow." : " It won't be tried again.";
+      return `couldn't send ${label} to ${to} (${reason}).${tail}`;
+    }
+    case "email_sent_late":
+      return `sent ${emailLabel(detail.email, item)} to ${String(detail.to)} after an earlier failure.`;
     default:
       return kind;
   }
