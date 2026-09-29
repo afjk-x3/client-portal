@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeFilename, storagePath, uploadMimeType, zipEntryNames } from "@/lib/files";
+import { formatSize, sanitizeFilename, storagePath, uploadMimeType, zipEntryNames } from "@/lib/files";
+
+describe("formatSize", () => {
+  it("counts bytes in KB, rounding up, and megabytes with one decimal", () => {
+    expect(formatSize(500)).toBe("1 KB");
+    expect(formatSize(1536)).toBe("2 KB");
+    expect(formatSize(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+});
 
 describe("sanitizeFilename", () => {
   it("keeps safe characters", () => {

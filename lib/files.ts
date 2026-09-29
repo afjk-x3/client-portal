@@ -1,5 +1,10 @@
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
+/** Human-readable size: whole KB under a megabyte, one decimal place of MB above. */
+export function formatSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 const MIME_BY_EXTENSION: Record<string, string> = {
   pdf: "application/pdf",
   jpg: "image/jpeg",

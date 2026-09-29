@@ -9,11 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { requireStaff } from "@/lib/auth";
-import { formatDate } from "@/lib/dates";
+import { formatDate, todayIn } from "@/lib/dates";
+import { NIL_UUID, PAGE_SIZE, readAll } from "@/lib/supabase/read-all";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
 import { ClientFormDialog } from "../client-form-dialog";
 import { setClientArchived, updateClient } from "./actions";
+import { ClientFiles } from "./client-files";
 import { Contacts } from "./contacts";
 import { DeleteClient } from "./delete-client";
 
@@ -30,7 +32,7 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
   if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [clientResult, contacts, requests, members] = await Promise.all([
+  const [clientResult, contacts, requests, members, fileRows] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, kind, owner_id, archived_at")
@@ -50,6 +52,19 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
       .eq("firm_id", staff.firmId)
       .order("created_at", { ascending: false }),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId).order("full_name"),
+    // Every file, archived requests included: only client_id scopes it, never the request status.
+    readAll((last?: { id: string }) =>
+      supabase
+        .from("item_files")
+        .select(
+          "id, filename, size_bytes, created_at, by_staff, request_items!inner(title, requests!inner(id, title, client_id))",
+        )
+        .eq("firm_id", staff.firmId)
+        .eq("request_items.requests.client_id", id)
+        .gt("id", last?.id ?? NIL_UUID)
+        .order("id")
+        .limit(PAGE_SIZE),
+    ),
   ]);
   if (clientResult.error) throw clientResult.error;
   if (contacts.error) throw contacts.error;
@@ -57,6 +72,18 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
   if (members.error) throw members.error;
   const client = clientResult.data;
   if (!client) notFound();
+
+  fileRows.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const files = fileRows.map((row) => ({
+    id: row.id,
+    filename: row.filename,
+    sizeBytes: row.size_bytes,
+    added: formatDate(todayIn(staff.timeZone, new Date(row.created_at))),
+    byStaff: row.by_staff,
+    requestId: row.request_items.requests.id,
+    requestTitle: row.request_items.requests.title,
+    itemTitle: row.request_items.title,
+  }));
 
   const memberList = members.data.map((m) => ({ userId: m.user_id, fullName: m.full_name }));
   const owner = memberList.find((m) => m.userId === client.owner_id);
@@ -131,6 +158,8 @@ async function Client({ params }: Pick<PageProps<"/app/clients/[id]">, "params">
           </Table>
         )}
       </div>
+
+      <ClientFiles files={files} />
     </>
   );
 }

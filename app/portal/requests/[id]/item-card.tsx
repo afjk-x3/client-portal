@@ -10,7 +10,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Textarea } from "@/components/ui/textarea";
 import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
-import { ACCEPT_ATTRIBUTE } from "@/lib/files";
+import { ACCEPT_ATTRIBUTE, formatSize } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
 import { removeFile, markUnavailable, submitItem } from "./actions";
 import { rejection, uploadFile } from "./upload";
@@ -62,10 +62,6 @@ export function ItemCard({ item, requestOpen, firmName }: { item: PortalItem; re
 }
 
 type Upload = { key: string; file: File; status: "pending" | "uploading" | "failed"; error?: string };
-
-function formatSize(bytes: number) {
-  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
 
 function FileItem({ item, editable, firmName }: { item: PortalItem; editable: boolean; firmName: string }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
