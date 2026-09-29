@@ -223,6 +223,54 @@ export type Database = {
           },
         ]
       }
+      notes: {
+        Row: {
+          author_id: string
+          body: string
+          client_id: string
+          created_at: string
+          firm_id: string
+          id: string
+          request_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          author_id?: string
+          body: string
+          client_id: string
+          created_at?: string
+          firm_id: string
+          id?: string
+          request_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          client_id?: string
+          created_at?: string
+          firm_id?: string
+          id?: string
+          request_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notes_client_id_firm_id_fkey"
+            columns: ["client_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id", "firm_id"]
+          },
+          {
+            foreignKeyName: "notes_request_id_client_id_fkey"
+            columns: ["request_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "requests"
+            referencedColumns: ["id", "client_id"]
+          },
+        ]
+      }
       notifications_sent: {
         Row: {
           created_at: string
