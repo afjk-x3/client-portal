@@ -1,9 +1,26 @@
 "use client";
 
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RequestStatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { archiveResultMessage } from "./archive-message";
+import { archiveRequests } from "./actions";
 import { formatDate } from "@/lib/dates";
 
 export type RequestListRow = {
@@ -16,6 +33,9 @@ export type RequestListRow = {
   openItems: number;
   overdue: boolean;
 };
+
+const isSelectable = (row: RequestListRow) => row.status === "open" || row.status === "completed";
+const plural = (count: number) => `${count} ${count === 1 ? "request" : "requests"}`;
 
 const columns: DataTableColumn<RequestListRow>[] = [
   {
@@ -51,5 +71,97 @@ const columns: DataTableColumn<RequestListRow>[] = [
 ];
 
 export function RequestsTable({ rows }: { rows: RequestListRow[] }) {
-  return <DataTable columns={columns} data={rows} emptyMessage="No requests match." />;
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [, startTransition] = useTransition();
+
+  const selectableIds = useMemo(() => rows.filter(isSelectable).map((row) => row.id), [rows]);
+  const chosen = selectableIds.filter((id) => selected.has(id));
+
+  const allColumns = useMemo<DataTableColumn<RequestListRow>[]>(() => {
+    const selectColumn: DataTableColumn<RequestListRow> = {
+      id: "select",
+      header: () => {
+        const all = selectableIds.length > 0 && chosen.length === selectableIds.length;
+        return (
+          <Checkbox
+            aria-label="Select all on this page"
+            checked={all ? true : chosen.length > 0 ? "indeterminate" : false}
+            onCheckedChange={(state) =>
+              setSelected((previous) => {
+                const next = new Set(previous);
+                for (const id of selectableIds) {
+                  if (state === true || state === "indeterminate") next.add(id);
+                  else next.delete(id);
+                }
+                return next;
+              })
+            }
+          />
+        );
+      },
+      cell: ({ row }) =>
+        isSelectable(row.original) ? (
+          <Checkbox
+            aria-label={`Select ${row.original.title}`}
+            checked={selected.has(row.original.id)}
+            onCheckedChange={(state) =>
+              setSelected((previous) => {
+                const next = new Set(previous);
+                if (state === true) next.add(row.original.id);
+                else next.delete(row.original.id);
+                return next;
+              })
+            }
+          />
+        ) : null,
+    };
+    return [selectColumn, ...columns];
+  }, [selectableIds, chosen, selected]);
+
+  function archive() {
+    const ids = [...selected];
+    startTransition(async () => {
+      const result = await archiveRequests(ids);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(archiveResultMessage(result.data?.archived ?? 0, ids.length));
+      setSelected(new Set());
+    });
+  }
+
+  const openCount = rows.filter((row) => selected.has(row.id) && row.status === "open").length;
+
+  return (
+    <>
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted-foreground">{selected.size} selected</span>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline">Archive {plural(selected.size)}</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Archive {plural(selected.size)}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Reminders stop and clients can no longer upload or submit. You can unarchive any of them later.
+                  {openCount > 0 && ` ${openCount} of them are still open.`}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={archive}>Archive</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+      <DataTable columns={allColumns} data={rows} emptyMessage="No requests match." />
+    </>
+  );
 }

@@ -44,6 +44,7 @@ async function Requests({ searchParams }: Pick<PageProps<"/app/requests">, "sear
     <>
       <RequestFiltersForm filters={filters} />
       <RequestsTable
+        key={JSON.stringify(filters)}
         rows={data.map((request) => ({
           id: request.id,
           title: request.title,
