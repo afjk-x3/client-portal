@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getContactClientIds, requireAdmin, requireStaff } from "@/lib/auth";
-import { sendEmails } from "@/lib/email/send";
+import { deliver } from "@/lib/email/deliver";
 import { staffAddedEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { ensureUser } from "@/lib/supabase/admin";
@@ -93,6 +93,9 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
   const content = staffAddedEmail({ firmName, adminName: admin.fullName });
 
   const userId = await ensureUser(parsed.data.email);
+  const alreadyInAFirm = { "23505": "This person already belongs to a firm." };
+  const { data: emailId, error: queueError } = await supabase.rpc("queue_staff_added", { user_id: userId });
+  if (queueError) return fail(queueError, alreadyInAFirm);
   const { error } = await supabase.from("firm_members").insert({
     firm_id: admin.firmId,
     user_id: userId,
@@ -100,10 +103,12 @@ export async function addStaff(_prev: ActionResult | null, formData: FormData): 
     full_name: parsed.data.fullName,
     email: parsed.data.email,
   });
-  if (error) return fail(error, { "23505": "This person already belongs to a firm." });
+  if (error) return fail(error, alreadyInAFirm);
 
   after(() =>
-    sendEmails([{ ...content, to: parsed.data.email, fromName: firmName, replyTo: admin.email }]),
+    deliver(supabase, [
+      { ...content, to: parsed.data.email, fromName: firmName, replyTo: admin.email, emailId },
+    ]),
   );
 
   revalidatePath("/app/settings");

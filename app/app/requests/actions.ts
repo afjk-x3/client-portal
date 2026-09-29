@@ -7,7 +7,8 @@ import type { z } from "zod";
 import { requireStaff } from "@/lib/auth";
 import { MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
 import { isOverdue, todayIn } from "@/lib/dates";
-import { emailConfigError, sendEmails } from "@/lib/email/send";
+import { deliver } from "@/lib/email/deliver";
+import { emailConfigError } from "@/lib/email/send";
 import { needsChangesEmail, reminderEmail, requestSentEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
@@ -69,14 +70,10 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     return { ok: false, error: "Add at least one required item before sending." };
   }
 
-  // Build the emails before changing anything, so a configuration error leaves the draft as is.
-  const [contacts, firm] = await Promise.all([
-    supabase.from("client_contacts").select("email").eq("client_id", request.client_id),
-    supabase.from("firms").select("name").eq("id", staff.firmId).single(),
-  ]);
-  if (contacts.error) return fail(contacts.error);
-  if (firm.error) return fail(firm.error);
-  const firmName = firm.data.name;
+  // Build the email before changing anything, so a configuration error leaves the draft as is.
+  const { data: firm, error: firmError } = await supabase.from("firms").select("name").eq("id", staff.firmId).single();
+  if (firmError) return fail(firmError);
+  const firmName = firm.name;
   const content = requestSentEmail({
     firmName,
     title: request.title,
@@ -85,7 +82,13 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
     requestId,
     message: request.message,
   });
-  const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+
+  // The database picks the recipients and holds a row per contact before anything changes.
+  const { data: queued, error: queueError } = await supabase.rpc("queue_request_emails", {
+    kind: "request_sent",
+    request_id: requestId,
+  });
+  if (queueError) return fail(queueError);
 
   const { data: sent, error } = await supabase
     .from("requests")
@@ -98,11 +101,18 @@ export async function sendRequest(requestId: string): Promise<ActionResult<{ con
   if (error) return fail(error);
   if (!sent) return fail(staleState);
 
-  after(() => sendEmails(messages));
+  const messages = queued.map((row) => ({
+    ...content,
+    to: row.recipient,
+    fromName: firmName,
+    replyTo: staff.email,
+    emailId: row.email_id,
+  }));
+  after(() => deliver(supabase, messages));
 
   revalidatePath(`/app/requests/${requestId}`);
   revalidatePath(`/app/clients/${request.client_id}`);
-  return { ok: true, data: { contacts: messages.length } };
+  return { ok: true, data: { contacts: queued.length } };
 }
 
 /**
@@ -143,14 +153,19 @@ export async function sendReminder(requestId: string): Promise<ActionResult<{ co
       .map((item) => item.title),
     requestId,
   });
-  const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
-
   const { data: claimed, error } = await supabase.rpc("claim_reminder", { request_id: requestId });
   if (error) return fail(error);
   if (!claimed?.length) return { ok: false, error: "A reminder already went out today." };
 
-  after(() => sendEmails(messages));
-  return { ok: true, data: { contacts: messages.length } };
+  const queued = claimed.map((row) => ({
+    ...content,
+    to: row.recipient,
+    fromName: firmName,
+    replyTo: staff.email,
+    emailId: row.email_id,
+  }));
+  after(() => deliver(supabase, queued));
+  return { ok: true, data: { contacts: claimed.length } };
 }
 
 /**
@@ -164,19 +179,16 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
   const { templateId, title, dueDate, clientIds, message } = parsed.data;
 
   const supabase = await createClient();
-  const [template, clients, firm] = await Promise.all([
+  const [template, firm] = await Promise.all([
     supabase
       .from("templates")
       .select("template_items(required)")
       .eq("id", templateId)
       .eq("firm_id", staff.firmId)
       .maybeSingle(),
-    // Contacts come embedded, so no response row limit can drop any.
-    supabase.from("clients").select("id, client_contacts(email)").eq("firm_id", staff.firmId).in("id", clientIds),
     supabase.from("firms").select("name").eq("id", staff.firmId).single(),
   ]);
   if (template.error) return fail(template.error);
-  if (clients.error) return fail(clients.error);
   if (firm.error) return fail(firm.error);
   if (!template.data) return fail(notFound);
   const items = template.data.template_items;
@@ -187,20 +199,14 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
   // Build every email before anything changes, so a configuration error sends nothing.
   const firmName = firm.data.name;
   const requestIds = clientIds.map(() => crypto.randomUUID());
-  const messages = clientIds.flatMap((clientId, index) => {
-    const content = requestSentEmail({
-      firmName,
-      title,
-      dueDate,
-      itemCount: items.length,
-      requestId: requestIds[index],
-      message,
-    });
-    const contacts = clients.data.find((client) => client.id === clientId)?.client_contacts ?? [];
-    return contacts.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
-  });
+  const contents = new Map(
+    requestIds.map((id) => [
+      id,
+      requestSentEmail({ firmName, title, dueDate, itemCount: items.length, requestId: id, message }),
+    ]),
+  );
 
-  const { error } = await supabase.rpc("send_requests", {
+  const { data: queued, error } = await supabase.rpc("send_requests", {
     template_id: templateId,
     title,
     due_date: dueDate,
@@ -210,7 +216,13 @@ export async function sendToClients(input: z.input<typeof bulkSendSchema>): Prom
   });
   if (error) return fail(error);
 
-  after(() => sendEmails(messages));
+  const messages = queued.flatMap((row) => {
+    const content = contents.get(row.request_id);
+    return content
+      ? [{ ...content, to: row.recipient, fromName: firmName, replyTo: staff.email, emailId: row.email_id }]
+      : [];
+  });
+  after(() => deliver(supabase, messages));
 
   revalidatePath("/app", "layout");
   return { ok: true, data: { requests: clientIds.length } };
@@ -358,7 +370,7 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
   const supabase = await createClient();
   const { data: item, error: itemError } = await supabase
     .from("request_items")
-    .select("title, request_id, requests(client_id, status)")
+    .select("title, request_id, requests(status)")
     .eq("id", itemId)
     .eq("firm_id", staff.firmId)
     .maybeSingle();
@@ -367,16 +379,19 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
   // A closed request's portal is read-only, so its contacts could not act on the note.
   if (!isReviewable(item.requests.status)) return fail(staleState);
 
-  // Build the emails before changing anything, so a configuration error leaves the item as is.
-  const [contacts, firm] = await Promise.all([
-    supabase.from("client_contacts").select("email").eq("client_id", item.requests.client_id),
-    supabase.from("firms").select("name").eq("id", staff.firmId).single(),
-  ]);
-  if (contacts.error) return fail(contacts.error);
-  if (firm.error) return fail(firm.error);
-  const firmName = firm.data.name;
+  // Build the email before changing anything, so a configuration error leaves the item as is.
+  const { data: firm, error: firmError } = await supabase.from("firms").select("name").eq("id", staff.firmId).single();
+  if (firmError) return fail(firmError);
+  const firmName = firm.name;
   const content = needsChangesEmail({ firmName, itemTitle: item.title, note: note.data, requestId: item.request_id });
-  const messages = contacts.data.map((c) => ({ ...content, to: c.email, fromName: firmName, replyTo: staff.email }));
+
+  // The database picks the recipients and holds a row per contact before anything changes.
+  const { data: queued, error: queueError } = await supabase.rpc("queue_request_emails", {
+    kind: "needs_changes",
+    request_id: item.request_id,
+    item_id: itemId,
+  });
+  if (queueError) return fail(queueError);
 
   const { data: returned, error } = await supabase
     .from("request_items")
@@ -394,7 +409,14 @@ export async function returnItem(itemId: string, _prev: ActionResult | null, for
   if (error) return fail(error);
   if (!returned) return fail(staleState);
 
-  after(() => sendEmails(messages));
+  const messages = queued.map((row) => ({
+    ...content,
+    to: row.recipient,
+    fromName: firmName,
+    replyTo: staff.email,
+    emailId: row.email_id,
+  }));
+  after(() => deliver(supabase, messages));
 
   revalidatePath(`/app/requests/${item.request_id}`);
   return { ok: true };
