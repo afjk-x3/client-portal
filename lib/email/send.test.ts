@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { emailConfigError, sendEmails, type EmailMessage } from "@/lib/email/send";
+import { emailConfigError, resendOutcome, sendEmails, smtpOutcome, type EmailMessage } from "@/lib/email/send";
 
 vi.mock("server-only", () => ({}));
 const { batchSend, sendMail, closeTransport, createTransport } = vi.hoisted(() => {
@@ -75,7 +75,7 @@ describe("sendEmails over SMTP", () => {
     sendMail.mockResolvedValue({});
     const result = await sendEmails([message("a@example.com"), { ...message("b@example.com"), replyTo: "staff@firm.example" }]);
 
-    expect(result).toEqual({ sent: 2, failed: 0 });
+    expect(result).toMatchObject({ sent: 2, failed: 0 });
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
         host: "smtp.gmail.com",
@@ -111,7 +111,7 @@ describe("sendEmails over SMTP", () => {
     const refused = Object.assign(new Error("550 5.1.1 No such user"), { responseCode: 550 });
     sendMail.mockRejectedValueOnce(refused).mockResolvedValueOnce({});
 
-    expect(await sendEmails([message("gone@example.com"), message("b@example.com")])).toEqual({ sent: 1, failed: 1 });
+    expect(await sendEmails([message("gone@example.com"), message("b@example.com")])).toMatchObject({ sent: 1, failed: 1 });
     expect(sendMail).toHaveBeenCalledTimes(2);
     expect(closeTransport).toHaveBeenCalledTimes(1);
   });
@@ -128,7 +128,7 @@ describe("sendEmails over SMTP", () => {
     const result = sendEmails([message("busy@example.com"), message("down@example.com")]);
     await vi.runAllTimersAsync();
 
-    expect(await result).toEqual({ sent: 1, failed: 1 });
+    expect(await result).toMatchObject({ sent: 1, failed: 1 });
     expect(attempts("busy@example.com")).toBe(3);
     expect(attempts("down@example.com")).toBe(3);
   });
@@ -146,7 +146,7 @@ describe("sendEmails", () => {
     const result = sendEmails(Array.from({ length: 150 }, (_, i) => message(`c${i}@example.com`)));
     await vi.runAllTimersAsync();
 
-    expect(await result).toEqual({ sent: 148, failed: 2 });
+    expect(await result).toMatchObject({ sent: 148, failed: 2 });
     expect(batchSend.mock.calls.map(([payload]) => payload.length)).toEqual([100, 50]);
     expect(batchSend.mock.calls[0][0][0].from).toBe('"Ledger & Co via PaperLine" <notify@example.com>');
     expect(batchSend.mock.calls[0][1]).toEqual({ batchValidation: "permissive" });
@@ -159,7 +159,7 @@ describe("sendEmails", () => {
     const result = sendEmails([message("c@example.com")]);
     await vi.runAllTimersAsync();
 
-    expect(await result).toEqual({ sent: 1, failed: 0 });
+    expect(await result).toMatchObject({ sent: 1, failed: 0 });
     expect(batchSend).toHaveBeenCalledTimes(2);
   });
 
@@ -170,7 +170,7 @@ describe("sendEmails", () => {
     const result = sendEmails([message("c@example.com")]);
     await vi.runAllTimersAsync();
 
-    expect(await result).toEqual({ sent: 1, failed: 0 });
+    expect(await result).toMatchObject({ sent: 1, failed: 0 });
     expect(batchSend).toHaveBeenCalledTimes(2);
   });
 
@@ -179,7 +179,7 @@ describe("sendEmails", () => {
     const result = sendEmails([message("a@example.com"), message("b@example.com")]);
     await vi.runAllTimersAsync();
 
-    expect(await result).toEqual({ sent: 0, failed: 2 });
+    expect(await result).toMatchObject({ sent: 0, failed: 2 });
     expect(batchSend).toHaveBeenCalledTimes(1);
   });
 
@@ -195,5 +195,171 @@ describe("sendEmails", () => {
 
     expect(started).toHaveLength(2);
     expect(started[1] - started[0]).toBeGreaterThanOrEqual(600);
+  });
+});
+
+
+describe("smtpOutcome", () => {
+  it("treats Gmail's daily sending limit as retryable", () => {
+    expect(smtpOutcome({ responseCode: 550, response: "550-5.4.5 Daily user sending limit exceeded." })).toEqual({
+      ok: false,
+      reason: "daily sending limit reached",
+      retry: true,
+    });
+  });
+
+  it("treats a dropped connection as retryable", () => {
+    expect(smtpOutcome({ code: "ECONNECTION" })).toEqual({ ok: false, reason: "connection problem", retry: true });
+    expect(smtpOutcome({ code: "ETIMEDOUT" })).toEqual({ ok: false, reason: "connection problem", retry: true });
+  });
+
+  it("retries a failed login with the server's reply", () => {
+    expect(
+      smtpOutcome({ code: "EAUTH", responseCode: 535, response: "535 5.7.8 Username and Password not accepted" }),
+    ).toEqual({
+      ok: false,
+      reason: "535 5.7.8 Username and Password not accepted",
+      retry: true,
+    });
+  });
+
+  it("retries a 4xx reply, but not a 5xx reply or an envelope error", () => {
+    expect(smtpOutcome({ responseCode: 451, response: "451 4.3.0 Try later" })).toEqual({
+      ok: false,
+      reason: "451 4.3.0 Try later",
+      retry: true,
+    });
+    expect(
+      smtpOutcome({ responseCode: 550, response: "550 5.1.1 The email account that you tried to reach does not exist" }),
+    ).toEqual({
+      ok: false,
+      reason: "550 5.1.1 The email account that you tried to reach does not exist",
+      retry: false,
+    });
+    expect(smtpOutcome({ code: "EENVELOPE", message: "No recipients defined" })).toEqual({
+      ok: false,
+      reason: "No recipients defined",
+      retry: false,
+    });
+  });
+
+  it("cuts a long reply to 200 characters", () => {
+    const outcome = smtpOutcome({ responseCode: 550, response: "x".repeat(300) });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toHaveLength(200);
+  });
+});
+
+describe("resendOutcome", () => {
+  it("treats the daily quota as the daily limit", () => {
+    expect(resendOutcome({ name: "daily_quota_exceeded", message: "Daily quota exceeded" })).toEqual({
+      ok: false,
+      reason: "daily sending limit reached",
+      retry: true,
+    });
+  });
+
+  it("retries a rate limit, a server error, and a key error", () => {
+    expect(resendOutcome({ name: "rate_limit_exceeded", message: "Too many requests" })).toEqual({
+      ok: false,
+      reason: "Too many requests",
+      retry: true,
+    });
+    expect(resendOutcome({ statusCode: 500, message: "Oops" })).toEqual({ ok: false, reason: "Oops", retry: true });
+    expect(resendOutcome({ name: "invalid_api_key", message: "Invalid API key" })).toEqual({
+      ok: false,
+      reason: "Invalid API key",
+      retry: true,
+    });
+  });
+
+  it("does not retry a rejected message", () => {
+    expect(resendOutcome({ name: "validation_error", message: "Bad" })).toEqual({
+      ok: false,
+      reason: "Bad",
+      retry: false,
+    });
+  });
+
+  it("treats a network failure as a connection problem", () => {
+    expect(resendOutcome(new TypeError("fetch failed"))).toEqual({
+      ok: false,
+      reason: "connection problem",
+      retry: true,
+    });
+  });
+});
+
+describe("sendEmails outcomes", () => {
+  it("reports one outcome per message over SMTP", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("SMTP_HOST", "smtp.gmail.com");
+    vi.stubEnv("SMTP_PORT", "");
+    vi.stubEnv("SMTP_USER", "paperline@gmail.com");
+    vi.stubEnv("SMTP_PASS", "app-password");
+    vi.stubEnv("EMAIL_FROM", "paperline@gmail.com");
+    const refused = Object.assign(new Error("550 5.1.1 unknown"), { responseCode: 550 });
+    sendMail.mockRejectedValueOnce(refused).mockResolvedValueOnce({}).mockResolvedValueOnce({});
+
+    const { sent, failed, results } = await sendEmails([
+      message("gone@example.com"),
+      message("b@example.com"),
+      message("c@example.com"),
+    ]);
+
+    expect({ sent, failed }).toEqual({ sent: 2, failed: 1 });
+    expect(results).toEqual([
+      { ok: false, reason: "550 5.1.1 unknown", retry: false },
+      { ok: true },
+      { ok: true },
+    ]);
+  });
+
+  it("reports a rejected address and a refused batch through Resend", async () => {
+    vi.stubEnv("SMTP_HOST", "");
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "Portal <notify@example.com>");
+
+    batchSend.mockResolvedValueOnce(accepted([{ index: 1, message: "Invalid `to` field" }]));
+    const first = sendEmails([message("a@example.com"), message("b@example.com")]);
+    await vi.runAllTimersAsync();
+    expect((await first).results).toEqual([
+      { ok: true },
+      { ok: false, reason: "Invalid `to` field", retry: false },
+    ]);
+
+    batchSend.mockResolvedValue({ data: null, error: { name: "rate_limit_exceeded", statusCode: 429, message: "Too many requests" } });
+    const second = sendEmails([message("c@example.com"), message("d@example.com")]);
+    await vi.runAllTimersAsync();
+    const report = await second;
+    expect(report).toMatchObject({ sent: 0, failed: 2 });
+    expect(report.results).toEqual([
+      { ok: false, reason: "Too many requests", retry: true },
+      { ok: false, reason: "Too many requests", retry: true },
+    ]);
+  });
+
+  it("reports every message as not set up when the email config is broken", async () => {
+    vi.stubEnv("SMTP_HOST", "");
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "");
+
+    const report = await sendEmails([message("a@example.com"), message("b@example.com")]);
+    expect(report).toMatchObject({ sent: 0, failed: 2 });
+    expect(report.results).toEqual([
+      { ok: false, reason: "email is not set up", retry: true },
+      { ok: false, reason: "email is not set up", retry: true },
+    ]);
+  });
+
+  it("reports success for every message in log mode", async () => {
+    vi.stubEnv("SMTP_HOST", "");
+    vi.stubEnv("RESEND_API_KEY", "");
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("EMAIL_FROM", "");
+
+    const report = await sendEmails([message("a@example.com")]);
+    expect(report).toMatchObject({ sent: 1, failed: 0 });
+    expect(report.results).toEqual([{ ok: true }]);
   });
 });

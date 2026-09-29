@@ -38,6 +38,57 @@ function fromHeader(fromName: string, address: string): string {
 
 const RETRY_DELAYS_MS = [2_000, 8_000]; // before the second and the third attempt
 
+/** What happened to one message: sent, or a short reason and whether a later run can succeed. */
+export type EmailOutcome = { ok: true } | { ok: false; reason: string; retry: boolean };
+
+/** The server's reply, cut to the length record_email_result stores. */
+function cut(text: string): string {
+  return text.length > 200 ? text.slice(0, 200) : text;
+}
+
+const CONNECTION_CODES = new Set(["ECONNECTION", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET", "EPIPE"]);
+
+/** The short reason and retry flag for an SMTP failure, per spec §5.4. */
+export function smtpOutcome(error: unknown): EmailOutcome {
+  const { responseCode, response, code, message } = (error ?? {}) as {
+    responseCode?: number;
+    response?: string;
+    code?: string;
+    message?: unknown;
+  };
+  const reply = cut(
+    typeof response === "string" && response
+      ? response
+      : typeof message === "string" && message
+        ? message
+        : (code ?? "send failed"),
+  );
+  // Gmail's daily limit is a 5xx, but it passes once the limit resets.
+  if (response?.includes("5.4.5")) return { ok: false, reason: "daily sending limit reached", retry: true };
+  if (code && CONNECTION_CODES.has(code)) return { ok: false, reason: "connection problem", retry: true };
+  // A failed login is retried: fixing the app password makes it pass.
+  if (code === "EAUTH") return { ok: false, reason: reply, retry: true };
+  if (code === "EENVELOPE") return { ok: false, reason: reply, retry: false };
+  if (responseCode !== undefined) return { ok: false, reason: reply, retry: responseCode < 500 };
+  return { ok: false, reason: reply, retry: true };
+}
+
+/** The short reason and retry flag for a Resend failure, per spec §5.4. */
+export function resendOutcome(error: unknown): EmailOutcome {
+  const { name, statusCode, message } = (error ?? {}) as {
+    name?: string;
+    statusCode?: number | null;
+    message?: unknown;
+  };
+  if (error instanceof TypeError) return { ok: false, reason: "connection problem", retry: true };
+  const reply = cut(typeof message === "string" && message ? message : (name ?? "send failed"));
+  if (name === "daily_quota_exceeded") return { ok: false, reason: "daily sending limit reached", retry: true };
+  if (name === "validation_error") return { ok: false, reason: reply, retry: false };
+  if (name === "rate_limit_exceeded" || name === "invalid_api_key") return { ok: false, reason: reply, retry: true };
+  if ((statusCode ?? 500) >= 500) return { ok: false, reason: reply, retry: true };
+  return { ok: false, reason: reply, retry: false };
+}
+
 /** Up to 3 attempts, waiting between them, while `transient` says another try can succeed. */
 async function withRetries<T>(attempt: () => Promise<T>, transient: (error: unknown) => boolean): Promise<T> {
   for (let tries = 0; ; tries++) {
@@ -94,7 +145,7 @@ async function sendOverSmtp(
   smtp: NonNullable<ReturnType<typeof smtpSettings>>,
   address: string,
   messages: EmailMessage[],
-): Promise<{ sent: number; failed: number }> {
+): Promise<{ sent: number; failed: number; results: EmailOutcome[] }> {
   const transport = createTransport({
     host: smtp.host,
     port: smtp.port,
@@ -102,7 +153,7 @@ async function sendOverSmtp(
     pool: true,
     auth: { user: smtp.user, pass: smtp.pass },
   });
-  const results = await Promise.allSettled(
+  const settled = await Promise.allSettled(
     messages.map((m) =>
       withRetries(
         () =>
@@ -120,23 +171,29 @@ async function sendOverSmtp(
   );
   transport.close();
 
-  let failed = 0;
-  results.forEach((result, index) => {
-    if (result.status === "fulfilled") return;
-    failed++;
+  const results: EmailOutcome[] = settled.map((result, index) => {
+    if (result.status === "fulfilled") return { ok: true };
     console.error("[email] rejected", messages[index].to, result.reason);
+    return smtpOutcome(result.reason);
   });
-  return { sent: messages.length - failed, failed };
+  const failed = results.filter((outcome) => !outcome.ok).length;
+  return { sent: messages.length - failed, failed, results };
 }
 
 /** Sends emails over SMTP, or through Resend in batches. Failures are logged and counted, never thrown. */
-export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: number; failed: number }> {
-  if (messages.length === 0) return { sent: 0, failed: 0 };
+export async function sendEmails(
+  messages: EmailMessage[],
+): Promise<{ sent: number; failed: number; results: EmailOutcome[] }> {
+  if (messages.length === 0) return { sent: 0, failed: 0, results: [] };
 
   const configError = emailConfigError();
   if (configError) {
     console.error(`[email] ${configError}; ${messages.length} emails not sent`);
-    return { sent: 0, failed: messages.length };
+    return {
+      sent: 0,
+      failed: messages.length,
+      results: messages.map(() => ({ ok: false, reason: "email is not set up", retry: true })),
+    };
   }
 
   const smtp = smtpSettings();
@@ -147,10 +204,11 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
     for (const m of messages) {
       console.log(`[email] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);
     }
-    return { sent: messages.length, failed: 0 };
+    return { sent: messages.length, failed: 0, results: messages.map(() => ({ ok: true })) };
   }
 
   const resend = new Resend(apiKey);
+  const results: EmailOutcome[] = messages.map(() => ({ ok: true }));
   let sent = 0;
   let failed = 0;
   for (let i = 0; i < messages.length; i += EMAIL_BATCH_SIZE) {
@@ -173,13 +231,15 @@ export async function sendEmails(messages: EmailMessage[]): Promise<{ sent: numb
       }, resendTransient);
       for (const rejected of data.errors) {
         console.error("[email] rejected", batch[rejected.index]?.to, rejected.message);
+        results[rejected.index + i] = { ok: false, reason: cut(rejected.message), retry: false };
       }
       failed += data.errors.length;
       sent += batch.length - data.errors.length;
     } catch (error) {
       failed += batch.length;
       console.error("[email] batch failed", error);
+      for (let j = 0; j < batch.length; j++) results[i + j] = resendOutcome(error);
     }
   }
-  return { sent, failed };
+  return { sent, failed, results };
 }
