@@ -855,6 +855,10 @@ export type Database = {
           request_id: string
         }[]
       }
+      send_scheduled_requests: {
+        Args: { schedule_id: string; today: string }
+        Returns: number
+      }
       set_schedule_paused: {
         Args: { paused: boolean; schedule_id: string }
         Returns: string
