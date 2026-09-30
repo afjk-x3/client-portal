@@ -23,9 +23,11 @@ import { deleteTemplate, saveTemplate } from "./actions";
 
 export function TemplateEditor({
   templateId,
+  scheduleCount,
   initial,
 }: {
   templateId: string;
+  scheduleCount: number;
   initial: { name: string; items: EditorItem[] };
 }) {
   const id = useId();
@@ -69,7 +71,10 @@ export function TemplateEditor({
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete this template?</AlertDialogTitle>
-              <AlertDialogDescription>Requests created from it are not affected.</AlertDialogDescription>
+              <AlertDialogDescription>
+                Requests created from it are not affected.
+                {scheduleCount > 0 && <> Its {scheduleCount} schedules will be deleted too.</>}
+              </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>

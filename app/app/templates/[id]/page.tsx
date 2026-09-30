@@ -28,7 +28,7 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
   const supabase = await createClient();
   const { data: template, error } = await supabase
     .from("templates")
-    .select("id, name, template_items(title, description, kind, required, position)")
+    .select("id, name, template_items(title, description, kind, required, position), schedules(count)")
     .eq("id", id)
     .eq("firm_id", staff.firmId)
     .order("position", { referencedTable: "template_items" })
@@ -55,6 +55,7 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
       </div>
       <TemplateEditor
         templateId={template.id}
+        scheduleCount={template.schedules[0]?.count ?? 0}
         initial={{ name: template.name, items: template.template_items.map((item) => newEditorItem(item)) }}
       />
     </>

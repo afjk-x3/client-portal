@@ -54,6 +54,7 @@ async function ScheduleTemplate({ params }: Pick<PageProps<"/app/templates/[id]/
       {/* Keyed by template: Next keeps this page mounted, and picks for one template must not carry over. */}
       <ScheduleForm
         key={template.data.id}
+        mode="create"
         templateId={template.data.id}
         defaultTitle={template.data.name}
         clients={clients.map((client) => ({

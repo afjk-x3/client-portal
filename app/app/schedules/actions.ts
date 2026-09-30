@@ -1,12 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireStaff } from "@/lib/auth";
 import { todayIn } from "@/lib/dates";
-import { fail, invalid, type ActionResult } from "@/lib/errors";
+import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
-import { scheduleSchema } from "@/lib/validation";
+import { isId, scheduleSchema } from "@/lib/validation";
 
 export async function saveSchedule(input: z.input<typeof scheduleSchema>): Promise<ActionResult<{ id: string }>> {
   const staff = await requireStaff();
@@ -33,4 +34,36 @@ export async function saveSchedule(input: z.input<typeof scheduleSchema>): Promi
 
   revalidatePath("/app/schedules");
   return { ok: true, data: { id: data } };
+}
+
+export async function setSchedulePaused(scheduleId: string, paused: boolean): Promise<ActionResult> {
+  await requireStaff();
+  if (!isId(scheduleId)) return fail(notFound);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("set_schedule_paused", { schedule_id: scheduleId, paused });
+  if (error) return fail(error);
+  if (!data) return fail(staleState);
+
+  revalidatePath("/app/schedules");
+  return { ok: true };
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<ActionResult> {
+  const staff = await requireStaff();
+  if (!isId(scheduleId)) return fail(notFound);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("schedules")
+    .delete()
+    .eq("id", scheduleId)
+    .eq("firm_id", staff.firmId)
+    .select("id")
+    .maybeSingle();
+  if (error) return fail(error);
+  if (!data) return fail(staleState);
+
+  revalidatePath("/app/schedules");
+  redirect("/app/schedules");
 }

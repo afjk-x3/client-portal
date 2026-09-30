@@ -184,6 +184,28 @@ Principles:
 | `kind` | text | `file` or `text` |
 | `required` | boolean | default `true` |
 
+**`schedules`**: `unique (id, firm_id)`; index `(template_id, firm_id)`, index on `created_by`
+
+| Column | Type | Notes |
+|---|---|---|
+| `firm_id` | uuid | |
+| `template_id` | uuid | FK `(template_id, firm_id)` to `templates`, on delete cascade |
+| `title` | text | 1 to 180 characters |
+| `every_months` | smallint | 1, 3, or 12 |
+| `day_of_month` | smallint | 1 to 31; set from the date when a date changes |
+| `next_send_on` | date | Required |
+| `due_after_days` | smallint | 1 to 365 |
+| `paused` | boolean | default `false` |
+| `created_by` | uuid, nullable | references `auth.users`, on delete set null |
+| `last_sent_on` | date, nullable | |
+
+**`schedule_clients`**: primary key `(schedule_id, client_id)`
+
+| Column | Type | Notes |
+|---|---|---|
+| `schedule_id`, `firm_id` | uuid | FK `(schedule_id, firm_id)` to `schedules`, on delete cascade |
+| `client_id`, `firm_id` | uuid | FK `(client_id, firm_id)` to `clients`, on delete cascade |
+
 **`requests`**: `unique (id, firm_id)`; index `(firm_id, status)`
 
 | Column | Type | Notes |
@@ -320,6 +342,7 @@ RLS is enabled on every table. A table with no policy for a role grants that rol
 | `clients` | select, insert, update | delete, only for archived clients | select, via `is_client_contact(id)` |
 | `client_contacts` | all | none | none |
 | `templates`, `template_items` | all | none | none |
+| `schedules`, `schedule_clients` | select, insert, delete; update of `schedules` only `title`, `every_months`, `day_of_month`, `next_send_on`, `due_after_days`, and `paused` | none | none |
 | `requests` | select, insert, update; delete only when `status = 'draft'` | none | select when `status <> 'draft'` and `is_client_contact(client_id)` |
 | `request_items` | all | none | select when the parent request is visible to the contact (the policy subquery on `requests` goes through `requests` RLS) |
 | `item_files` | select | none | select when the parent item is visible to the contact (goes through `request_items` RLS) |
@@ -334,7 +357,7 @@ Two guarantees follow from these policies:
 
 ### 8.3 RPCs
 
-Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`, `unarchive_request`, `template_from_request`, and `retention_preview`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. The first two take the completion rule from `computed_request_status`.
+Every RPC in this table is `security definer` with `set search_path = ''`, except `refresh_request_status`, `unarchive_request`, `template_from_request`, and `retention_preview`. Those are security invoker: staff calls run under RLS, and calls made from inside a definer RPC run with the RPC owner's rights. The first two take the completion rule from `computed_request_status`. `save_schedule` and `set_schedule_paused` are also security invoker, and `next_schedule_date` is `immutable`.
 
 | Function | Caller | Checks | Effect |
 |---|---|---|---|
@@ -352,6 +375,10 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `queue_staff_added(user_id)` | Admin | Definer: the caller is an admin; a user who already belongs to a firm raises the unique-violation code | Queues the invitation before the membership row exists, then returns the row id. |
 | `claim_due_emails(max_rows)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | None | Leases the oldest due outbox rows for an hour with `for update skip locked`, so no two runs send the same row, and returns them. |
 | `record_email_result(email_id, reason, retry)` | Staff of the row's firm (the action's `after()` records it through the user-scoped client), or `service_role`; execute revoked from `public` and `anon` | Firm member only: an outcome recorded by staff of another firm, or by a contact, changes nothing; the service role bypasses | Applies one outcome: sent deletes the row (logging `email_sent_late` when it had failed before); a retryable failure with fewer than 3 failures keeps it an hour later; anything else deletes it and logs `email_failed` on the request. |
+| `save_schedule(schedule_id, template_id, title, every_months, next_send_on, due_after_days, client_ids)` | Staff; security invoker, execute revoked from `public` and `anon` | RLS decides: the template is visible on create, the schedule on update; otherwise `not_allowed`, and a missing schedule raises `invalid_state`. A null `schedule_id` creates; a null `next_send_on` keeps the current date. | Creates or updates the schedule and replaces its client list in one transaction, setting `day_of_month` from the date. Returns the id. |
+| `set_schedule_paused(schedule_id, paused)` | Staff; security invoker, execute revoked from `public` and `anon` | RLS decides; returns null when the schedule is missing or already in that state | Pauses or resumes. Resuming moves a `next_send_on` at or before today past today, so dates missed while paused are not sent. Returns the id. |
+| `next_schedule_date(from_date, every_months, day_of_month, after)` | Staff; `immutable`, execute revoked from `public` and `anon` | None | The first date after `after` in the series stepping `every_months` months, each on `day_of_month` or the month's last day when the month is shorter. |
+| `send_scheduled_requests(schedule_id, today)` | `service_role` only; execute is revoked from `public`, `anon`, and `authenticated` | The schedule is not paused and is due; the template has a required item | Per eligible client (not archived, at least one contact): creates an open request titled `{title} – {period}`, copies the template's items, queues `request_sent`, and logs one `sent` event with no actor. Always moves `next_send_on` past `today`, and sets `last_sent_on` when it sent. Returns the number created. |
 
 Client-facing RPCs raise an exception with one of two messages:
 
@@ -604,6 +631,8 @@ The route sets `maxDuration = 300`.
 2. Select items in their firm with `submitted_at` in the window.
 3. If there are none, skip the member without claiming.
 4. Otherwise claim `('staff_digest', user_id, today)`, then queue an outbox row.
+
+**Schedules.** After a firm's reminders and digests are claimed, each of its schedules that is not paused and whose `next_send_on` is at or before the firm's local today is sent through `send_scheduled_requests(schedule_id, today)` — one transaction per schedule, so a failure fails that firm while the firm's earlier schedules, reminders, and digests stand. The route's JSON summary includes `scheduled`, the number of requests created.
 
 **Delivery.**
 
