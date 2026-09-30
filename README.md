@@ -36,6 +36,13 @@ On Windows, the `vector` log container keeps restarting because it cannot read D
 
 After changing a migration, run `npx supabase db reset` and then `npm run db:types`.
 
+A reset also drops the storage unique index the bundled storage-api expects (the CLI's storage templates are newer than the running container), breaking uploads with `42P10`. Restore it with:
+
+```sh
+docker exec supabase_db_client-portal psql -U supabase_admin -d postgres -c 'create unique index if not exists objects_bucket_id_name_key on storage.objects (bucket_id, name)'
+```
+
+
 ## Environment variables
 
 | Name | Purpose |

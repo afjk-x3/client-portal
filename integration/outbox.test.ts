@@ -5,7 +5,9 @@ import { createClient, type PostgrestError } from "@supabase/supabase-js";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { runDailyJobs } from "@/lib/daily-jobs";
 import type { Database } from "@/lib/database.types";
+import { deliver } from "@/lib/email/deliver";
 import type { EmailMessage, EmailOutcome } from "@/lib/email/send";
+import { readSignInCode } from "../e2e/mailpit";
 
 vi.mock("server-only", () => ({}));
 const capture = vi.hoisted(() => ({ sent: [] as EmailMessage[], script: [] as EmailOutcome[] }));
@@ -301,4 +303,43 @@ it("returns disjoint rows to two claims at once", async () => {
   expect(a.filter((id) => b.includes(id))).toHaveLength(0);
   expect(a.length + b.length).toBeGreaterThanOrEqual(1);
   expect(a.length + b.length).toBeLessThanOrEqual(ids.length);
+}, 120_000);
+
+it("records an action's send through the signed-in staff member's own session", async () => {
+  freshCapture();
+  // The action's after() runs with the user-scoped client, so deliver() must be able to
+  // execute record_email_result through that session, not only through the service role.
+  // Sign in exactly as the app does: a 6-digit code, read from Mailpit.
+  const staff = createClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+  const { error: otpError } = await staff.auth.signInWithOtp({ email: users.staff.email });
+  if (otpError) throw otpError;
+  const code = await readSignInCode(users.staff.email);
+  const { error: verifyError } = await staff.auth.verifyOtp({ email: users.staff.email, token: code, type: "email" });
+  if (verifyError) throw verifyError;
+
+  // What sendRequest leaves behind: one held row per contact, queued before the change.
+  const { data: held, error: queueError } = await staff.rpc("queue_request_emails", {
+    kind: "request_sent",
+    request_id: requestIds.Draft,
+  });
+  if (queueError) throw queueError;
+  expect(held).toHaveLength(1);
+
+  await deliver(staff, [
+    {
+      emailId: held[0].email_id,
+      to: held[0].recipient,
+      fromName: "Outbox",
+      subject: "Draft request",
+      html: "<p>Draft request</p>",
+      text: "Draft request",
+    },
+  ]);
+
+  expect(capture.sent).toHaveLength(1);
+  expect(await queued(held[0].email_id)).toBeNull();
 }, 120_000);

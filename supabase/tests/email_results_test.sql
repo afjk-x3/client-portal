@@ -8,6 +8,7 @@ delete from public.email_outbox;
 delete from public.request_events;
 
 -- The service role claims the two oldest due rows, not the held one.
+-- (RETURNING's row order follows heap order, so sort the assertion's input.)
 insert into public.email_outbox (firm_id, kind, recipient, send_after) values
   ('f0000000-0000-0000-0000-00000000000a', 'staff_added', 'due1@test.local', now() - interval '1 hour'),
   ('f0000000-0000-0000-0000-00000000000a', 'staff_added', 'due2@test.local', now() - interval '1 hour'),
@@ -16,7 +17,7 @@ insert into public.email_outbox (firm_id, kind, recipient, send_after) values
 set local role service_role;
 create temp table claimed as
   select recipient, send_after from public.claim_due_emails(2);
-select results_eq($$ select recipient from claimed $$,
+select results_eq($$ select recipient from claimed order by recipient $$,
   $$ values ('due1@test.local'::text), ('due2@test.local'::text) $$,
   'the service role claims the two oldest due rows');
 select is((select count(*) from claimed
