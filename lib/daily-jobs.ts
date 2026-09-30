@@ -243,7 +243,10 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
           if (notification.kind === "reminder") summary.reminders++;
           else summary.digests++;
         }
-        summary.scheduled += await sendSchedules(admin, firm, today);
+        // Read-then-add must not straddle the await: with `+= await` the read
+        // happens before suspension and a concurrent worker's write clobbers it.
+        const sent = await sendSchedules(admin, firm, today);
+        summary.scheduled += sent;
         summary.firms++;
       } catch (err) {
         summary.failedFirms++;
