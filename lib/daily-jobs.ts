@@ -20,6 +20,7 @@ export type DailySummary = {
   failedFirms: number;
   reminders: number;
   digests: number;
+  scheduled: number;
   outbox: OutboxSummary;
   outboxFailed: boolean;
 };
@@ -157,8 +158,7 @@ async function claim(admin: Admin, notifications: Notification[], today: string,
  * due at once; a queueing error fails the firm, as a read error does.
  * "Today" is the date in the firm's time zone.
  */
-async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notification[]> {
-  const today = todayIn(firm.time_zone, now);
+async function claimFirm(admin: Admin, firm: Firm, today: string, now: Date): Promise<Notification[]> {
   const members = await readAll((last?: { user_id: string }) =>
     admin
       .from("firm_members")
@@ -187,7 +187,29 @@ async function claimFirm(admin: Admin, firm: Firm, now: Date): Promise<Notificat
 }
 
 /**
- * Reminders and staff digests for every firm, then the outbox's due emails.
+ * The firm's due schedules, each sent in its own transaction by the service
+ * role, so one failure keeps the earlier ones and fails the firm.
+ */
+async function sendSchedules(admin: Admin, firm: Firm, today: string): Promise<number> {
+  const schedules = await admin
+    .from("schedules")
+    .select("id")
+    .eq("firm_id", firm.id)
+    .eq("paused", false)
+    .lte("next_send_on", today);
+  if (schedules.error) throw schedules.error;
+
+  let scheduled = 0;
+  for (const { id } of schedules.data) {
+    const { data, error } = await admin.rpc("send_scheduled_requests", { schedule_id: id, today });
+    if (error) throw error;
+    scheduled += data;
+  }
+  return scheduled;
+}
+
+/**
+ * Reminders, staff digests, and due schedules for every firm, then the outbox's due emails.
  * Each firm is isolated in its own try/catch; an outbox failure fails the run.
  * ponytail: the job runs once a day at 01:00 UTC (vercel.json), 9 am in UTC+8, so
  * firms in other time zones get their emails at other local hours. Upgrade path:
@@ -203,6 +225,7 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
     failedFirms: 0,
     reminders: 0,
     digests: 0,
+    scheduled: 0,
     outbox: { sent: 0, retrying: 0, gaveUp: 0, dropped: 0 },
     outboxFailed: false,
   };
@@ -215,10 +238,12 @@ export async function runDailyJobs(admin: Admin, now: Date = new Date()): Promis
     while (next < firms.length) {
       const firm = firms[next++];
       try {
-        for (const notification of await claimFirm(admin, firm, now)) {
+        const today = todayIn(firm.time_zone, now);
+        for (const notification of await claimFirm(admin, firm, today, now)) {
           if (notification.kind === "reminder") summary.reminders++;
           else summary.digests++;
         }
+        summary.scheduled += await sendSchedules(admin, firm, today);
         summary.firms++;
       } catch (err) {
         summary.failedFirms++;
