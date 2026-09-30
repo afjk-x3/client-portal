@@ -34,6 +34,8 @@ async function rows<T>(query: PromiseLike<{ data: T; error: null } | { data: nul
 }
 
 beforeAll(async () => {
+  // Schedules left by e2e runs are due in this test's 2031 date too.
+  await rows(admin.from("schedules").delete().not("id", "is", null));
   const { data: staff, error: staffError } = await admin.auth.admin.createUser({
     email: `sched-staff-${tag}@example.com`,
     email_confirm: true,
