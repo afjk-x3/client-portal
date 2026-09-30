@@ -12,6 +12,7 @@ export const MAX_CLIENTS_PER_SEND = 100;
 export const LIMITS = {
   firmName: 120,
   name: 200,
+  scheduleTitle: 180,
   description: 2000,
   textAnswer: 5000,
   reviewNote: 1000,

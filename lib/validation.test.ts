@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archiveRequestsSchema, messageSchema, noteSchema, unavailableReasonSchema } from "@/lib/validation";
+import { archiveRequestsSchema, messageSchema, noteSchema, scheduleSchema, unavailableReasonSchema } from "@/lib/validation";
 
 describe("noteSchema", () => {
   it("trims the note", () => {
@@ -61,5 +61,41 @@ describe("archiveRequestsSchema", () => {
   it("keeps one of each repeated id", () => {
     const [first] = ids(1);
     expect(archiveRequestsSchema.parse([first, first])).toEqual([first]);
+  });
+});
+
+describe("scheduleSchema", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const base = {
+    templateId: id,
+    title: "Monthly bookkeeping",
+    everyMonths: 1,
+    nextSendOn: "2027-01-15",
+    dueAfterDays: 14,
+    clientIds: [id],
+  };
+  const message = (input: unknown) => scheduleSchema.safeParse(input).error?.issues[0]?.message;
+
+  it("accepts the fields the form sends, with no next send date", () => {
+    expect(scheduleSchema.safeParse(base).success).toBe(true);
+    expect(scheduleSchema.safeParse({ ...base, nextSendOn: undefined }).success).toBe(true);
+  });
+  it("refuses a title of 181 characters", () => {
+    expect(message({ ...base, title: "x".repeat(181) })).toBe("Title must be 180 characters or fewer.");
+  });
+  it("refuses a repeat of 2 months", () => {
+    expect(scheduleSchema.safeParse({ ...base, everyMonths: 2 }).success).toBe(false);
+  });
+  it("refuses due-after days outside 1 to 365", () => {
+    expect(message({ ...base, dueAfterDays: 0 })).toBe("Enter 1 to 365 days.");
+    expect(message({ ...base, dueAfterDays: 366 })).toBe("Enter 1 to 365 days.");
+  });
+  it("refuses an empty or over-large client list, like bulk send", () => {
+    expect(message({ ...base, clientIds: [] })).toBe("Pick at least one client.");
+    const ids = Array.from(
+      { length: 101 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    expect(message({ ...base, clientIds: ids })).toBe("Pick at most 100 clients at a time.");
   });
 });

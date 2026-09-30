@@ -109,6 +109,21 @@ export const bulkSendSchema = z.object({
     .transform((ids) => [...new Set(ids)]),
 });
 
+export const scheduleSchema = z.object({
+  scheduleId: z.uuid().optional(),
+  templateId: z.uuid(),
+  title: text("Title", LIMITS.scheduleTitle),
+  everyMonths: z.union([z.literal(1), z.literal(3), z.literal(12)]),
+  /** Omitted on edit when unchanged; the create form always sends it. */
+  nextSendOn: z.iso.date("Pick a date.").optional(),
+  dueAfterDays: z.number().int().min(1, "Enter 1 to 365 days.").max(365, "Enter 1 to 365 days."),
+  clientIds: z
+    .array(z.uuid())
+    .min(1, "Pick at least one client.")
+    .max(MAX_CLIENTS_PER_SEND, `Pick at most ${MAX_CLIENTS_PER_SEND} clients at a time.`)
+    .transform((ids) => [...new Set(ids)]),
+});
+
 export const templateSchema = z.object({
   templateId: z.uuid(),
   name: text("Template name", LIMITS.name),

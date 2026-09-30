@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Send } from "lucide-react";
+import { CalendarClock, Send } from "lucide-react";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,11 +39,17 @@ async function Template({ params }: Pick<PageProps<"/app/templates/[id]">, "para
 
   return (
     <>
-      <div>
+      <div className="flex flex-wrap gap-2">
         <Button variant="outline" asChild>
           <Link href={`/app/templates/${template.id}/send`}>
             <Send />
             Send to clients
+          </Link>
+        </Button>
+        <Button variant="outline" asChild>
+          <Link href={`/app/templates/${template.id}/schedule`}>
+            <CalendarClock />
+            Send on a schedule
           </Link>
         </Button>
       </div>

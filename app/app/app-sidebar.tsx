@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, Inbox, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
+import { CalendarClock, FileText, Inbox, LayoutDashboard, LogOut, Settings, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +21,7 @@ const NAV = [
   { href: "/app/clients", label: "Clients", icon: Users },
   { href: "/app/requests", label: "Requests", icon: Inbox },
   { href: "/app/templates", label: "Templates", icon: FileText },
+  { href: "/app/schedules", label: "Schedules", icon: CalendarClock },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
