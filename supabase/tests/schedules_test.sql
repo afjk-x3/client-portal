@@ -4,7 +4,7 @@
 -- set_schedule_paused skips missed dates; deleting a template or
 -- client cascades to schedules and their clients.
 begin;
-select plan(26);
+select plan(28);
 \ir fixtures/seed.psql
 
 select is(next_schedule_date(date '2027-01-31', 1, 31, date '2027-01-31'), date '2027-02-28',
@@ -15,6 +15,10 @@ select is(next_schedule_date(date '2027-01-15', 3, 15, date '2027-01-15'), date 
   'a quarterly schedule steps three months');
 select is(next_schedule_date(date '2027-01-15', 12, 15, date '2027-01-15'), date '2028-01-15',
   'a yearly schedule steps twelve months');
+select is(next_schedule_date(date '2027-08-31', 3, 31, date '2027-08-31'), date '2027-11-30',
+  'a quarterly schedule on the 31st clamps to November''s last day');
+select is(next_schedule_date(date '2027-05-31', 12, 31, date '2027-05-31'), date '2028-05-31',
+  'a yearly schedule on the 31st stays on the 31st when the month has it');
 select is(next_schedule_date(date '2027-01-01', 1, 1, date '2027-03-20'), date '2027-04-01',
   'it steps past to the first date after the given day');
 select is(next_schedule_date(date '2027-05-01', 1, 1, date '2027-03-20'), date '2027-05-01',

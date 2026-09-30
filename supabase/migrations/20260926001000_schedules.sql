@@ -93,7 +93,7 @@ as $$
               least(next_schedule_date.day_of_month,
                 extract(day from (
                   pg_catalog.date_trunc('month', next_schedule_date.from_date)
-                  + pg_catalog.make_interval(months => (s.n + 1) * next_schedule_date.every_months)
+                  + pg_catalog.make_interval(months => s.n * next_schedule_date.every_months + 1)
                   - interval '1 day'))::int) - 1))::date as day
       ) c
       where c.day > next_schedule_date.after
