@@ -521,6 +521,92 @@ export type Database = {
           },
         ]
       }
+      schedule_clients: {
+        Row: {
+          client_id: string
+          firm_id: string
+          schedule_id: string
+        }
+        Insert: {
+          client_id: string
+          firm_id: string
+          schedule_id: string
+        }
+        Update: {
+          client_id?: string
+          firm_id?: string
+          schedule_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_clients_client_id_firm_id_fkey"
+            columns: ["client_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id", "firm_id"]
+          },
+          {
+            foreignKeyName: "schedule_clients_schedule_id_firm_id_fkey"
+            columns: ["schedule_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "schedules"
+            referencedColumns: ["id", "firm_id"]
+          },
+        ]
+      }
+      schedules: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          day_of_month: number
+          due_after_days: number
+          every_months: number
+          firm_id: string
+          id: string
+          last_sent_on: string | null
+          next_send_on: string
+          paused: boolean
+          template_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          day_of_month: number
+          due_after_days: number
+          every_months: number
+          firm_id: string
+          id?: string
+          last_sent_on?: string | null
+          next_send_on: string
+          paused?: boolean
+          template_id: string
+          title: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          day_of_month?: number
+          due_after_days?: number
+          every_months?: number
+          firm_id?: string
+          id?: string
+          last_sent_on?: string | null
+          next_send_on?: string
+          paused?: boolean
+          template_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedules_template_id_firm_id_fkey"
+            columns: ["template_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "templates"
+            referencedColumns: ["id", "firm_id"]
+          },
+        ]
+      }
       template_items: {
         Row: {
           created_at: string
@@ -691,6 +777,15 @@ export type Database = {
         Args: { item_id: string; reason: string }
         Returns: undefined
       }
+      next_schedule_date: {
+        Args: {
+          after: string
+          day_of_month: number
+          every_months: number
+          from_date: string
+        }
+        Returns: string
+      }
       orphaned_documents: {
         Args: { max_rows?: number; older_than?: string }
         Returns: string[]
@@ -729,6 +824,18 @@ export type Database = {
         }
         Returns: string
       }
+      save_schedule: {
+        Args: {
+          client_ids: string[]
+          due_after_days: number
+          every_months: number
+          next_send_on: string
+          schedule_id: string
+          template_id: string
+          title: string
+        }
+        Returns: string
+      }
       save_template: {
         Args: { items: Json; name: string; template_id: string }
         Returns: undefined
@@ -747,6 +854,10 @@ export type Database = {
           recipient: string
           request_id: string
         }[]
+      }
+      set_schedule_paused: {
+        Args: { paused: boolean; schedule_id: string }
+        Returns: string
       }
       submit_item: {
         Args: { item_id: string; text_answer?: string }
