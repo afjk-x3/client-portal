@@ -12,7 +12,7 @@ const encoder = new TextEncoder();
 /** At most two decimals, so offsets in the xref table stay predictable. */
 const num = (x: number) => String(Number(x.toFixed(2)));
 
-export function imagesToPdf(pages: { jpeg: Uint8Array; width: number; height: number }[]): Uint8Array {
+export function imagesToPdf(pages: { jpeg: Uint8Array; width: number; height: number }[]): Uint8Array<ArrayBuffer> {
   const chunks: Uint8Array[] = [];
   let offset = 0;
   const write = (data: Uint8Array) => {
