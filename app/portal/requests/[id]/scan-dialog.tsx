@@ -1,13 +1,14 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Camera, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
@@ -37,6 +38,9 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
   // The ref is the truth the limits are checked against, so a slow photo
   // cannot push the list past 30 while state updates are still pending.
   const pagesRef = useRef<ScanPage[]>([]);
+  // Discards bump this so a photo still decoding lands nowhere after the
+  // list it belonged to is gone: preparePhoto can outlive a click.
+  const generationRef = useRef(0);
 
   function replace(next: ScanPage[]) {
     pagesRef.current = next;
@@ -44,20 +48,42 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
   }
 
   function clear() {
+    generationRef.current++;
     for (const page of pagesRef.current) URL.revokeObjectURL(page.url);
     replace([]);
   }
 
+  useEffect(
+    () => () => {
+      generationRef.current++;
+      for (const page of pagesRef.current) URL.revokeObjectURL(page.url);
+    },
+    [],
+  );
+
   async function addPhotos(files: FileList | null) {
+    const generation = generationRef.current;
     for (const file of Array.from(files ?? [])) {
+      if (generation !== generationRef.current) return;
       if (pagesRef.current.length >= MAX_PAGES) {
         toast.error(LIMIT);
         return;
       }
       try {
         const page = await preparePhoto(file);
+        if (generation !== generationRef.current) {
+          URL.revokeObjectURL(page.url);
+          return;
+        }
+        // Another pick can be decoding in parallel; re-check after the await.
+        if (pagesRef.current.length >= MAX_PAGES) {
+          URL.revokeObjectURL(page.url);
+          toast.error(LIMIT);
+          return;
+        }
         replace([...pagesRef.current, page]);
       } catch {
+        if (generation !== generationRef.current) return;
         toast.error(`${file.name}: this photo can't be read here. Take a new photo, or upload it with Choose files.`);
       }
     }
@@ -110,7 +136,7 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
             Scan pages
           </Button>
         </DialogTrigger>
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Scan pages</DialogTitle>
             <DialogDescription>{itemTitle}</DialogDescription>
@@ -121,6 +147,7 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
             accept="image/*"
             multiple
             className="sr-only"
+            aria-label="Add photos"
             onChange={(event) => {
               void addPhotos(event.target.files);
               event.target.value = "";
@@ -178,6 +205,7 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Discard {pages.length} pages?</AlertDialogTitle>
+            <AlertDialogDescription>The photos you added will be lost.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

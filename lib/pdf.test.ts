@@ -65,13 +65,14 @@ describe("imagesToPdf", () => {
   });
 
   it("embeds the JPEG bytes unchanged with a matching length", () => {
-    const dict = /\/DCTDecode[\s\S]*?stream\n/.exec(text);
-    expect(dict).not.toBeNull();
-    const from = dict!.index;
-    expect(text.slice(from, dict!.index + dict![0].length).replace(/\nstream\n$/, "")).toContain("/Length 7");
-    const at = dict!.index + dict![0].length;
-    for (const [i, byte] of FAKE_JPEG.entries()) {
-      expect(text.charCodeAt(at + i)).toBe(byte);
+    const streams = [...text.matchAll(/\/DCTDecode[\s\S]*?stream\n/g)];
+    expect(streams).toHaveLength(2);
+    for (const match of streams) {
+      expect(match[0].replace(/\nstream\n$/, "")).toContain("/Length 7");
+      const at = match.index! + match[0].length;
+      for (const [i, byte] of FAKE_JPEG.entries()) {
+        expect(text.charCodeAt(at + i)).toBe(byte);
+      }
     }
   });
 });

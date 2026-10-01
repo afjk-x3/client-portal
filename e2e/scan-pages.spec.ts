@@ -14,8 +14,29 @@ async function png(page: Page, colour: string): Promise<Buffer> {
   return Buffer.from(base64, "base64");
 }
 
-/** A contact with an open request holding one file item, on the request page. */
-async function portalWithItem(browser: Browser, itemTitle: string): Promise<Page> {
+/** Noisy JPEGs of the largest size the scanner keeps (2000px): about 1.9 MB each. */
+async function noise(page: Page, count: number): Promise<Buffer[]> {
+  const base64s = await page.evaluate(async (n) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 2000;
+    canvas.height = 1500;
+    const context = canvas.getContext("2d")!;
+    const image = context.createImageData(canvas.width, canvas.height);
+    for (let i = 0; i < image.data.length; i += 4) {
+      const value = Math.random() * 255;
+      image.data[i] = value;
+      image.data[i + 1] = value;
+      image.data[i + 2] = value;
+      image.data[i + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    const data = canvas.toDataURL("image/jpeg", 0.85).split(",")[1]!;
+    return Array.from({ length: n }, () => data);
+  }, count);
+  return base64s.map((data) => Buffer.from(data, "base64"));
+}
+
+/** A contact with an open request holding one file item, on the request page. */async function portalWithItem(browser: Browser, itemTitle: string): Promise<Page> {
   const contactEmail = uniqueEmail("scanner");
   const staff = await (await browser.newContext()).newPage();
   await signUpWithFirm(staff, uniqueEmail("scanstaff"), "Ledger & Co", "Sam Staff");
@@ -88,4 +109,24 @@ test("limits and mistakes", async ({ browser }) => {
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog.locator("img")).toHaveCount(30);
+});
+
+test("a PDF over 25 MB is refused", async ({ browser }) => {
+  const contact = await portalWithItem(browser, "Bank statement");
+
+  await contact.getByRole("button", { name: "Scan pages" }).click();
+  const dialog = contact.getByRole("dialog", { name: "Scan pages" });
+  // 16 pages of noise weigh about 30 MB together: over MAX_FILE_BYTES, under the page limit.
+  await dialog.locator('input[type="file"]').setInputFiles(
+    (await noise(contact, 16)).map((buffer, i) => ({
+      name: `noise${i + 1}.jpg`,
+      mimeType: "image/jpeg",
+      buffer,
+    })),
+  );
+  await expect(dialog.locator("img")).toHaveCount(16);
+  await dialog.getByRole("button", { name: "Create PDF" }).click();
+  await expectToast(contact, "This PDF is over 25 MB. Remove some pages, or scan the rest separately.");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("img")).toHaveCount(16);
 });
