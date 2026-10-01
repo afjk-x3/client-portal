@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { requireStaff } from "@/lib/auth";
 import { formatDateTime, isOverdue, todayIn } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
-import { DashboardTabs } from "./dashboard-tabs";
+import { DashboardTabs, type MessageRow } from "./dashboard-tabs";
 
 export default function DashboardPage() {
   return (
@@ -66,15 +66,7 @@ async function Dashboard() {
     }
   }
   const seenItems = new Set<string>();
-  const messages: {
-    requestId: string;
-    itemId: string;
-    client: string;
-    request: string;
-    item: string;
-    latest: string;
-    at: string;
-  }[] = [];
+  const messages: MessageRow[] = [];
   for (const row of unread.data) {
     const request = requestsById.get(row.request_id);
     if (!request || seenItems.has(row.item_id)) continue;

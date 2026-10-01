@@ -88,7 +88,7 @@ Actions queue their emails before they change anything, so a failure to queue fa
   - A user who already belongs to a firm is refused with the unique-violation code `23505`, so Add staff keeps its message "This person already belongs to a firm."
 - **`post_item_message(item_id, body)`** returns `table (email_id bigint, recipient text)`, one row per contact of the item's client, or no rows at all.
   - The caller must be staff of the item's firm or a contact of its client, and the request must be `open` or `completed`; otherwise it raises `not_allowed` or `invalid_state`.
-  - Only a staff message queues; a contact's message inserts the row and returns nothing to send. A staff message also marks the item's unread client messages read, so the waiting row for an item is replaced once, and its `reply_to_id` is the writer.
+  - Only a staff message queues; a contact's message inserts the row and returns nothing to send. A staff message also marks the item's unread client messages read, and its `reply_to_id` is the writer.
 - **`send_requests` and `claim_reminder`** already change state inside the database, so they queue in the same transaction:
   - `send_requests` queues each new request's emails while the requests are still drafts, then opens them. It now returns `table (email_id bigint, request_id uuid, recipient text)`.
   - `claim_reminder` queues one reminder per contact after it wins the day's claim. It now returns `table (email_id bigint, recipient text)`. No rows means today's reminder already went out.

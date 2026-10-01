@@ -241,7 +241,7 @@ Principles:
 | `mime` | text | Read from Storage metadata |
 | `uploaded_by` | uuid, nullable | references `auth.users`, on delete set null |
 
-**`item_messages`**: index `(item_id, created_at)`; a partial index on `(firm_id)` where a client message is unread
+**`item_messages`**: index `(item_id, created_at)`, index `(request_id, created_at)`; a partial index on `(firm_id)` where a client message is unread
 
 | Column | Type | Notes |
 |---|---|---|

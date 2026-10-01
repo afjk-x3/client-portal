@@ -18,6 +18,7 @@ create table public.item_messages (
   check (read_at is null or not by_staff)
 );
 create index item_messages_item_id_created_at_idx on public.item_messages (item_id, created_at);
+create index item_messages_request_id_created_at_idx on public.item_messages (request_id, created_at);
 create index item_messages_unread_firm_id_idx on public.item_messages (firm_id)
   where not by_staff and read_at is null;
 

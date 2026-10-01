@@ -27,7 +27,7 @@ type ReadyRow = {
   submitted: string;
 };
 
-type MessageRow = {
+export type MessageRow = {
   requestId: string;
   itemId: string;
   client: string;
