@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
+import { ItemThread, type ThreadMessage } from "@/components/item-thread";
 import { ItemStatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, formatSize } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
-import { removeFile, markUnavailable, submitItem } from "./actions";
+import { removeFile, markUnavailable, postItemMessage, submitItem } from "./actions";
 import { ScanDialog } from "./scan-dialog";
 import { rejection, uploadFile } from "./upload";
 
@@ -30,7 +31,19 @@ export type PortalItem = {
   files: { id: string; filename: string; sizeBytes: number; byStaff: boolean }[];
 };
 
-export function ItemCard({ item, requestOpen, firmName }: { item: PortalItem; requestOpen: boolean; firmName: string }) {
+export function ItemCard({
+  item,
+  requestOpen,
+  canWrite,
+  firmName,
+  messages,
+}: {
+  item: PortalItem;
+  requestOpen: boolean;
+  canWrite: boolean;
+  firmName: string;
+  messages: ThreadMessage[];
+}) {
   // ponytail: optional items lock when a request completes. Upgrade path: allow
   // optional submissions on completed requests.
   const editable = requestOpen && (item.status === "requested" || item.status === "needs_changes");
@@ -57,6 +70,13 @@ export function ItemCard({ item, requestOpen, firmName }: { item: PortalItem; re
         ) : (
           <TextItem item={item} editable={editable} />
         )}
+        <ItemThread
+          messages={messages}
+          canWrite={canWrite}
+          label="Write a message"
+          send={(body) => postItemMessage(item.id, body)}
+          emptyButton="Ask a question"
+        />
       </CardContent>
     </Card>
   );

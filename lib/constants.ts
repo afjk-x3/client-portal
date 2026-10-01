@@ -19,5 +19,6 @@ export const LIMITS = {
   unavailableReason: 1000,
   filename: 255,
   message: 2000,
+  itemMessage: 2000,
   note: 2000,
 } as const;

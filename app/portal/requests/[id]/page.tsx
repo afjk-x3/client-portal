@@ -2,11 +2,12 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RequestStatusBadge } from "@/components/status-badge";
+import type { ThreadMessage } from "@/components/item-thread";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getContactClientIds } from "@/lib/auth";
-import { formatDate } from "@/lib/dates";
+import { getContactClientIds, getUser } from "@/lib/auth";
+import { formatDate, formatDateTime } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
 import { isId } from "@/lib/validation";
 import { progressPercent } from "../../progress";
@@ -28,7 +29,7 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
   const { data: request, error } = await supabase
     .from("requests")
     .select(
-      `id, title, status, due_date, message, clients(firms(name)),
+      `id, title, status, due_date, message, clients(firms(name, time_zone)),
        request_items(id, position, title, description, kind, required, status, text_answer, review_note,
          unavailable_reason, item_files(id, filename, size_bytes, created_at, by_staff))`,
     )
@@ -42,8 +43,31 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
   if (error) throw error;
   if (!request) notFound();
 
+  const { data: messages, error: messagesError } = await supabase
+    .from("item_messages")
+    .select("id, item_id, author_id, author_name, by_staff, body, created_at")
+    .eq("request_id", request.id)
+    .order("created_at")
+    .order("id");
+  if (messagesError) throw messagesError;
+
   const progress = progressPercent(request.request_items);
   const open = request.status === "open";
+  const canWrite = open || request.status === "completed";
+  const firmName = request.clients?.firms?.name ?? "your firm";
+  const timeZone = request.clients?.firms?.time_zone ?? "UTC";
+  const viewerId = (await getUser())?.id ?? null;
+  const messagesByItem = new Map<string, ThreadMessage[]>();
+  for (const message of messages ?? []) {
+    const thread: ThreadMessage[] = messagesByItem.get(message.item_id) ?? [];
+    thread.push({
+      id: message.id,
+      author: message.author_id === viewerId ? "You" : message.by_staff ? firmName : message.author_name,
+      body: message.body,
+      at: formatDateTime(message.created_at, timeZone),
+    });
+    messagesByItem.set(message.item_id, thread);
+  }
 
   return (
     <>
@@ -73,7 +97,9 @@ async function PortalRequest({ params }: Pick<PageProps<"/portal/requests/[id]">
         <ItemCard
           key={item.id}
           requestOpen={open}
-          firmName={request.clients?.firms?.name ?? "your firm"}
+          canWrite={canWrite}
+          firmName={firmName}
+          messages={messagesByItem.get(item.id) ?? []}
           item={{
             id: item.id,
             title: item.title,

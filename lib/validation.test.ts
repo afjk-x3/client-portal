@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { archiveRequestsSchema, messageSchema, noteSchema, scheduleSchema, unavailableReasonSchema } from "@/lib/validation";
+import {
+  archiveRequestsSchema,
+  itemMessageSchema,
+  messageSchema,
+  noteSchema,
+  scheduleSchema,
+  unavailableReasonSchema,
+} from "@/lib/validation";
 
 describe("noteSchema", () => {
   it("trims the note", () => {
@@ -40,6 +47,20 @@ describe("messageSchema", () => {
   });
   it("refuses 2,001 characters", () => {
     expect(messageSchema.safeParse("x".repeat(2001)).error?.issues[0].message).toBe(
+      "Message must be 2,000 characters or fewer.",
+    );
+  });
+});
+
+describe("itemMessageSchema", () => {
+  it("trims the message", () => {
+    expect(itemMessageSchema.parse("  Which bank?  ")).toBe("Which bank?");
+  });
+  it("refuses a blank message", () => {
+    expect(itemMessageSchema.safeParse("   ").error?.issues[0].message).toBe("Message is required.");
+  });
+  it("refuses 2,001 characters", () => {
+    expect(itemMessageSchema.safeParse("x".repeat(2001)).error?.issues[0].message).toBe(
       "Message must be 2,000 characters or fewer.",
     );
   });

@@ -26,6 +26,7 @@ export const textAnswerSchema = text("Answer", LIMITS.textAnswer);
 export const unavailableReasonSchema = text("Reason", LIMITS.unavailableReason);
 export const filenameSchema = text("File name", LIMITS.filename);
 export const messageSchema = optionalText("Message", LIMITS.message);
+export const itemMessageSchema = text("Message", LIMITS.itemMessage);
 export const noteSchema = text("Note", LIMITS.note);
 export const dueDateSchema = z.iso.date("Pick a due date.");
 export const roleSchema = z.enum(["admin", "staff"]);

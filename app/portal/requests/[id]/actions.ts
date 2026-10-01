@@ -8,7 +8,7 @@ import { MAX_FILES_PER_ITEM } from "@/lib/constants";
 import { fail, invalid, notFound, type ActionResult } from "@/lib/errors";
 import { storagePath } from "@/lib/files";
 import { createClient } from "@/lib/supabase/server";
-import { filenameSchema, isId, textAnswerSchema, unavailableReasonSchema } from "@/lib/validation";
+import { filenameSchema, isId, itemMessageSchema, textAnswerSchema, unavailableReasonSchema } from "@/lib/validation";
 
 function revalidateRequestPages() {
   revalidatePath("/portal/requests/[id]", "page");
@@ -98,6 +98,20 @@ export async function markUnavailable(itemId: string, reason: string): Promise<A
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("mark_unavailable", { item_id: itemId, reason: parsed.data });
+  if (error) return fail(error);
+
+  revalidateRequestPages();
+  return { ok: true };
+}
+
+/** A contact's message on an item; queued emails only come from staff replies. */
+export async function postItemMessage(itemId: string, body: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
+  const parsed = itemMessageSchema.safeParse(body);
+  if (!parsed.success) return invalid(parsed.error);
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("post_item_message", { item_id: itemId, body: parsed.data });
   if (error) return fail(error);
 
   revalidateRequestPages();
