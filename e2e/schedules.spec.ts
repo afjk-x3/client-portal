@@ -71,7 +71,10 @@ test("pause, resume, edit, and delete a schedule", async ({ browser }) => {
   await expectToast(page, "Client archived.");
   await page.getByRole("link", { name: "Schedules" }).click();
   await page.getByRole("link", { name: "Monthly bookkeeping" }).click();
-  await expect(page.getByText("Archived", { exact: true })).toBeVisible();
+  // Scoped to the picker row: pages navigated away stay mounted hidden (<Activity>),
+  // and the archived client's own page also has an "Archived" badge.
+  const betaRow = page.getByRole("listitem").filter({ hasText: "Beta Builders" });
+  await expect(betaRow.getByText("Archived", { exact: true })).toBeVisible();
 
   // The template's delete dialog counts the schedules it takes with it.
   await page.getByRole("link", { name: "Templates" }).click();
