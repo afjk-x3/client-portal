@@ -533,10 +533,11 @@ No email is sent at this point. A contact's first email is `request_sent`.
 
 ### 10.5 Upload (contact)
 
-1. The browser checks file size and type. This check is for user experience only; the bucket and the policies enforce the real limits.
-2. The Server Action `createUploadUrl(itemId, filename)` builds the object path. It calls `can_write_document(path)` through RPC and stops with `not_allowed` if the result is false. Only then does it call `createSignedUploadUrl` with the user-scoped client. The explicit check means safety does not depend on when Storage evaluates its insert policy for signed uploads.
-3. The browser calls `uploadToSignedUrl(path, token, file)`. It uploads files one at a time and shows a status for each file: pending, uploading, done, or failed with a retry button.
-4. The Server Action `registerFile(itemId, path, filename)` calls the `register_file` RPC, then revalidates the page.
+1. "Scan pages" joins a photo set into one PDF in the browser before the usual upload: each photo becomes one A4 page, and the PDF then follows the steps below.
+2. The browser checks file size and type. This check is for user experience only; the bucket and the policies enforce the real limits.
+3. The Server Action `createUploadUrl(itemId, filename)` builds the object path. It calls `can_write_document(path)` through RPC and stops with `not_allowed` if the result is false. Only then does it call `createSignedUploadUrl` with the user-scoped client. The explicit check means safety does not depend on when Storage evaluates its insert policy for signed uploads.
+4. The browser calls `uploadToSignedUrl(path, token, file)`. It uploads files one at a time and shows a status for each file: pending, uploading, done, or failed with a retry button.
+5. The Server Action `registerFile(itemId, path, filename)` calls the `register_file` RPC, then revalidates the page.
 
 To remove a file:
 

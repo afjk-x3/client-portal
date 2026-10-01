@@ -13,6 +13,7 @@ import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, formatSize } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
 import { removeFile, markUnavailable, submitItem } from "./actions";
+import { ScanDialog } from "./scan-dialog";
 import { rejection, uploadFile } from "./upload";
 
 export type PortalItem = {
@@ -109,7 +110,7 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
 
   const room = MAX_FILES_PER_ITEM - item.files.length - uploads.length;
 
-  function addFiles(files: FileList | null) {
+  function addFiles(files: FileList | File[] | null) {
     const picked: File[] = [];
     for (const file of Array.from(files ?? [])) {
       const reason = rejection(file);
@@ -202,30 +203,33 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
         </ul>
       )}
       {editable && room > 0 && (
-        <label
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm focus-within:ring-[3px] focus-within:ring-ring/50 ${
-            dragging ? "bg-muted" : ""
-          }`}
-        >
-          <span className="font-medium">Choose files or drag them here</span>
-          <span className="text-muted-foreground">PDF, images, Word, Excel, or CSV. Up to 25 MB each.</span>
-          <input
-            type="file"
-            multiple
-            accept={ACCEPT_ATTRIBUTE}
-            className="sr-only"
-            onChange={(event) => {
-              addFiles(event.target.files);
-              event.target.value = "";
+        <>
+          <label
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragging(true);
             }}
-          />
-        </label>
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={`flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed p-6 text-center text-sm focus-within:ring-[3px] focus-within:ring-ring/50 ${
+              dragging ? "bg-muted" : ""
+            }`}
+          >
+            <span className="font-medium">Choose files or drag them here</span>
+            <span className="text-muted-foreground">PDF, images, Word, Excel, or CSV. Up to 25 MB each.</span>
+            <input
+              type="file"
+              multiple
+              accept={ACCEPT_ATTRIBUTE}
+              className="sr-only"
+              onChange={(event) => {
+                addFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+          </label>
+          <ScanDialog itemTitle={item.title} onPdf={(file) => addFiles([file])} />
+        </>
       )}
       {editable && item.files.length === 0 && uploads.length === 0 && !answering && (
         <Button variant="outline" className="self-start" onClick={() => setAnswering(true)}>
