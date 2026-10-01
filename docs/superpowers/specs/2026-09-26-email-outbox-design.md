@@ -36,10 +36,10 @@ With this change, every app email is recorded in an outbox before it is sent, an
 email_outbox
   id            bigint generated always as identity primary key
   firm_id       uuid not null references firms (id) on delete cascade
-  kind          text not null check (kind in ('request_sent', 'needs_changes', 'reminder', 'staff_added', 'staff_digest'))
+  kind          text not null check (kind in ('request_sent', 'needs_changes', 'reminder', 'staff_added', 'staff_digest', 'item_message'))
   recipient     text not null
-  request_id    uuid                   -- request_sent, needs_changes, reminder
-  item_id       uuid                   -- needs_changes
+  request_id    uuid                   -- request_sent, needs_changes, reminder, item_message
+  item_id       uuid                   -- needs_changes, item_message
   reply_to_id   uuid                   -- the staff member replies go to; no foreign key, since they may leave
   window_start  timestamptz            -- staff_digest
   window_end    timestamptz            -- staff_digest
@@ -51,7 +51,7 @@ email_outbox
   unique nulls not distinct (kind, recipient, request_id, item_id, window_end)
 ```
 
-- A check ties the references to the kind: a request for the three request emails, an item for `needs_changes` only, and both window bounds for `staff_digest` only.
+- A check ties the references to the kind: a request for `request_sent`, `needs_changes`, `reminder`, and `item_message`; an item for `needs_changes` and `item_message`; and both window bounds for `staff_digest` only.
 - The unique key allows at most one waiting email of each kind to each recipient about the same request or item. Queuing another replaces the waiting one: its failures go back to 0, and its firm, reply-to, and `send_after` are set anew. A staff-added email therefore follows someone re-added to another firm. Digests never collide, since each has its own window.
 - Indexes cover the foreign keys.
 - Deleting a firm, a request, or an item removes its waiting emails.
@@ -72,6 +72,7 @@ email_outbox
 | `reminder` | Send reminder (`claim_reminder`) and the daily job | Every contact of the client | The staff member; for the daily job, the request's creator |
 | `staff_added` | Add staff (`queue_staff_added`) | The new member | The admin |
 | `staff_digest` | The daily job | The member | None |
+| `item_message` | Write to the client (`post_item_message`) | Every contact of the client | The staff member |
 
 The database picks the recipients; callers never pass an address.
 
@@ -85,6 +86,9 @@ Actions queue their emails before they change anything, so a failure to queue fa
 - **`queue_staff_added(user_id)`** returns the row's id.
   - The caller must be an admin. The recipient is the user's sign-in email.
   - A user who already belongs to a firm is refused with the unique-violation code `23505`, so Add staff keeps its message "This person already belongs to a firm."
+- **`post_item_message(item_id, body)`** returns `table (email_id bigint, recipient text)`, one row per contact of the item's client, or no rows at all.
+  - The caller must be staff of the item's firm or a contact of its client, and the request must be `open` or `completed`; otherwise it raises `not_allowed` or `invalid_state`.
+  - Only a staff message queues; a contact's message inserts the row and returns nothing to send. A staff message also marks the item's unread client messages read, so the waiting row for an item is replaced once, and its `reply_to_id` is the writer.
 - **`send_requests` and `claim_reminder`** already change state inside the database, so they queue in the same transaction:
   - `send_requests` queues each new request's emails while the requests are still drafts, then opens them. It now returns `table (email_id bigint, request_id uuid, recipient text)`.
   - `claim_reminder` queues one reminder per contact after it wins the day's claim. It now returns `table (email_id bigint, recipient text)`. No rows means today's reminder already went out.
@@ -125,7 +129,8 @@ Each email is rebuilt with the template and inputs the action uses, so a retried
 | `needs_changes` | The item is `needs_changes`, the request is `open`, and the recipient is a contact. The note is the item's current `review_note`. |
 | `reminder` | The request is `open`, its client is not archived, it has an item in `requested` or `needs_changes`, and the recipient is a contact. |
 | `staff_added` | The recipient is a member of the row's firm. The email names the admin who added them, or says "An admin" if that admin has left. |
-| `staff_digest` | The recipient is a member of the row's firm, and items were submitted in the window. |
+| `staff_digest` | The recipient is a member of the row's firm, and items were submitted or client messages were written in the window. |
+| `item_message` | The request is `open` or `completed`, the recipient is a contact of its client, the item still exists, and the item has a staff message. The body is the item's latest staff message. |
 
 The reply-to is the email of the `reply_to_id` member, or none if they have left the firm.
 
@@ -160,11 +165,12 @@ Gmail's limit reply is a 5xx, but it passes once the limit resets, so it is trie
 | `email_failed` | A send fails | `email` (the kind), `to`, `reason`, and `outcome`: `retrying`, `gave_up` (out of tries), or `failed` (permanent) |
 | `email_sent_late` | An email is sent after an earlier failure | `email`, `to` |
 
-`request_events.kind` allows the two new kinds, and `lib/activity.ts` describes them. The emails are called "the request email", "the changes-needed email for {item}", and "the reminder":
+`request_events.kind` allows the two new kinds, and `lib/activity.ts` describes them. The emails are called "the request email", "the changes-needed email for {item}", "the reminder", and "the message about {item}":
 
 - "PaperLine couldn't send the reminder to maria@example.com (daily sending limit reached). Trying again tomorrow."
 - "PaperLine gave up on the request email to maria@example.com after 3 days (daily sending limit reached)."
 - "PaperLine couldn't send the changes-needed email for “Photo ID” to maria@example.com (550 5.1.1 The email account that you tried to reach does not exist). It won't be tried again."
+- "PaperLine couldn't send the message about “Bank statement” to maria@example.com (connection problem). Trying again tomorrow."
 - "PaperLine sent the reminder to maria@example.com after an earlier failure."
 
 ## 7. Daily log

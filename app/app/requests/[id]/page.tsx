@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ThreadMessage } from "@/components/item-thread";
 import { RequestStatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ACTIVITY_LIMIT, actorName, describeEvent, itemLabel } from "@/lib/activity";
@@ -29,7 +30,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   if (!isId(id)) notFound();
   const staff = await requireStaff();
   const supabase = await createClient();
-  const [requestResult, members, noteRows] = await Promise.all([
+  const [requestResult, members, messageRows, noteRows] = await Promise.all([
     supabase
       .from("requests")
       .select(
@@ -46,6 +47,13 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
       .maybeSingle(),
     supabase.from("firm_members").select("user_id, full_name").eq("firm_id", staff.firmId),
     supabase
+      .from("item_messages")
+      .select("id, item_id, author_name, by_staff, body, created_at, read_at")
+      .eq("request_id", id)
+      .eq("firm_id", staff.firmId)
+      .order("created_at")
+      .order("id"),
+    supabase
       .from("notes")
       .select("id, author_id, body, created_at, updated_at")
       .eq("request_id", id)
@@ -57,11 +65,24 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
   ]);
   if (requestResult.error) throw requestResult.error;
   if (members.error) throw members.error;
+  if (messageRows.error) throw messageRows.error;
   if (noteRows.error) throw noteRows.error;
   const request = requestResult.data;
   if (!request) notFound();
 
   const memberNames = new Map(members.data.map((member) => [member.user_id, member.full_name] as const));
+  const messagesByItem = new Map<string, ThreadMessage[]>();
+  for (const message of messageRows.data) {
+    const thread: ThreadMessage[] = messagesByItem.get(message.item_id) ?? [];
+    thread.push({
+      id: message.id,
+      author: message.author_name,
+      body: message.body,
+      at: formatDateTime(message.created_at, staff.timeZone),
+      isNew: !message.by_staff && message.read_at === null,
+    });
+    messagesByItem.set(message.item_id, thread);
+  }
   const notesOlderHidden = noteRows.data.length > NOTES_LIMIT;
   const notes = noteRows.data.slice(0, NOTES_LIMIT).map((note) => ({
     id: note.id,
@@ -172,6 +193,7 @@ async function Request({ params }: Pick<PageProps<"/app/requests/[id]">, "params
           reviewNote: item.review_note,
           unavailableReason: item.unavailable_reason,
           submitted: item.submitted_at ? formatDateTime(item.submitted_at, staff.timeZone) : null,
+          messages: messagesByItem.get(item.id) ?? [],
           files: item.item_files.map((file) => ({
             id: file.id,
             filename: file.filename,

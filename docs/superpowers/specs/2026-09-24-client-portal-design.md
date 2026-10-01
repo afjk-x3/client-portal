@@ -241,6 +241,20 @@ Principles:
 | `mime` | text | Read from Storage metadata |
 | `uploaded_by` | uuid, nullable | references `auth.users`, on delete set null |
 
+**`item_messages`**: index `(item_id, created_at)`; a partial index on `(firm_id)` where a client message is unread
+
+| Column | Type | Notes |
+|---|---|---|
+| `firm_id`, `client_id`, `request_id`, `item_id` | uuid | Only `(item_id, firm_id)` is a foreign key, to `request_items (id, firm_id)`, on delete cascade; `client_id` and `request_id` are plain copies, so there is no path from a message to `requests` |
+| `author_id` | uuid | No foreign key: a message outlives its author's account |
+| `author_name` | text | The display name, copied at write time |
+| `by_staff` | boolean | Whether the firm's member wrote it |
+| `body` | text | 1 to 2,000 characters, line breaks kept |
+| `read_at` | timestamptz, nullable | Null until staff have seen the message; a check keeps it null on staff messages |
+| `created_at` | timestamptz | |
+
+Only the two functions in §8.3 write rows: insert, update, and delete are revoked from `anon` and `authenticated`.
+
 **`notes`**: index `(client_id, created_at)` and `(request_id, created_at)`
 
 | Column | Type | Notes |
@@ -267,7 +281,7 @@ Constraint: `unique (kind, target_id, sent_on)`.
 | Column | Type | Notes |
 |---|---|---|
 | `firm_id` | uuid | references `firms`, on delete cascade |
-| `kind` | text | `request_sent`, `needs_changes`, `reminder`, `staff_added`, or `staff_digest` |
+| `kind` | text | `request_sent`, `needs_changes`, `reminder`, `staff_added`, `staff_digest`, or `item_message` |
 | `recipient` | text | The address, chosen by the database functions, never passed by a caller |
 | `request_id`, `item_id`, `reply_to_id` | uuid, nullable | Composite FKs to `requests` / `request_items` `(id, firm_id)`, on delete cascade |
 | `window_start`, `window_end` | timestamptz, nullable | The digest window; both required for `staff_digest` |
@@ -346,6 +360,7 @@ RLS is enabled on every table. A table with no policy for a role grants that rol
 | `requests` | select, insert, update; delete only when `status = 'draft'` | none | select when `status <> 'draft'` and `is_client_contact(client_id)` |
 | `request_items` | all | none | select when the parent request is visible to the contact (the policy subquery on `requests` goes through `requests` RLS) |
 | `item_files` | select | none | select when the parent item is visible to the contact (goes through `request_items` RLS) |
+| `item_messages` | select | none | select, via `is_client_contact(client_id)`; no write for anyone, the functions in §8.3 write |
 | `notes` | select, insert; update and delete only for the caller's own notes, and only `body` can be updated | none | none |
 | `notifications_sent` | none | none | none |
 | `email_outbox` | none | none | none |
@@ -365,6 +380,8 @@ Every RPC in this table is `security definer` with `set search_path = ''`, excep
 | `submit_item(item_id, text_answer)` | Contact | The request is `open`. The item is `requested` or `needs_changes`. A file item has at least one file. A text item has an answer of 1 to 5,000 characters. | Sets `status = 'submitted'` and `submitted_at = now()`. Saves `text_answer` for text items. |
 | `register_file(item_id, storage_path, filename)` | Contact | The same open-item checks. The item kind is `file`. The path starts with `{firm_id}/{client_id}/{item_id}/`. The object exists in the `documents` bucket. The item has fewer than 20 files. | Inserts into `item_files`, taking `size_bytes` and `mime` from `storage.objects.metadata`. Sets `uploaded_by` to the caller. |
 | `remove_file(file_id)` | Contact | The same open-item checks | Deletes the row and returns `storage_path`. |
+| `post_item_message(item_id, body)` | Staff of the item's firm, or a contact of its client; execute revoked from `public` and `anon` | Definer: `is_firm_member`, or `is_client_contact` on a non-draft. The request is `open` or `completed`. | Inserts the message. A staff message marks the item's unread client messages read and queues one `item_message` email per contact, held for an hour; a contact's message queues nothing. Returns `(email_id, recipient)`, empty for a contact's message. |
+| `mark_item_messages_read(item_id)` | Staff of the item's firm; execute revoked from `public` and `anon` | Definer: `is_firm_member` | Sets `read_at = now()` on the item's unread client messages. |
 | `refresh_request_status(request_id)` | The trigger | Security invoker, so RLS applies | Recomputes the request status. |
 | `unarchive_request(request_id)` | Staff (for Unarchive) | Security invoker, so RLS applies. The request is `archived`. | Sets `open` or `completed`, whichever the items call for, in one statement, so the timeline records one `unarchived` event. Returns the id, or null when nothing changed. |
 | `template_from_request(request_id)` | Staff (Save as template) | Security invoker, so RLS applies. Not a draft. | Creates a template named after the request, with its items renumbered, and returns its id or null. |
@@ -598,7 +615,8 @@ The route sets `maxDuration = 300`.
 | `request_sent` | Send | Every contact of the client | Firm, title, due date, item count, link | The sender |
 | `needs_changes` | Staff return an item | Every contact of the client | Item title, note, link | The reviewer |
 | `reminder` | Daily cron | Every contact of the client | Open items, due date, overdue flag, link | The request creator, if still a member |
-| `staff_digest` | Daily cron | Every member of the firm | Submitted items grouped by client and request, with links | None |
+| `staff_digest` | Daily cron | Every member of the firm | Submitted items and new client message counts, grouped by client and request, with links | None |
+| `item_message` | Staff write on an item | Every contact of the client | Firm, item title, the message, link | The staff member |
 
 ### 11.2 Daily cron
 
@@ -629,9 +647,9 @@ The route sets `maxDuration = 300`.
 **Staff digest.** For each staff member:
 
 1. The window starts at the `created_at` of their latest earlier `staff_digest` claim, or 24 hours ago if there is none. Because of this, a missed day is covered by the next run.
-2. Select items in their firm with `submitted_at` in the window.
-3. If there are none, skip the member without claiming.
-4. Otherwise claim `('staff_digest', user_id, today)`, then queue an outbox row.
+2. Select items in their firm with `submitted_at` in the window, and client messages (`by_staff = false`) with `created_at` in the window.
+3. If there are neither, skip the member without claiming.
+4. Otherwise claim `('staff_digest', user_id, today)`, then queue an outbox row. The email lists the submitted items as always, and a "New messages" section with each item's message count, grouped like the items.
 
 **Schedules.** After a firm's reminders and digests are claimed, each of its schedules that is not paused and whose `next_send_on` is at or before the firm's local today is sent through `send_scheduled_requests(schedule_id, today)` — one transaction per schedule, so a failure fails that firm while the firm's earlier schedules, reminders, and digests stand. The route's JSON summary includes `scheduled`, the number of requests created.
 

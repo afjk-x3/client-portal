@@ -9,7 +9,7 @@ import { MAX_ITEMS_PER_REQUEST } from "@/lib/constants";
 import { isOverdue, todayIn } from "@/lib/dates";
 import { deliver } from "@/lib/email/deliver";
 import { emailConfigError } from "@/lib/email/send";
-import { needsChangesEmail, reminderEmail, requestSentEmail } from "@/lib/email/templates";
+import { itemMessageEmail, needsChangesEmail, reminderEmail, requestSentEmail } from "@/lib/email/templates";
 import { fail, invalid, notFound, staleState, type ActionResult } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -17,6 +17,7 @@ import {
   bulkSendSchema,
   draftSchema,
   isId,
+  itemMessageSchema,
   itemSchema,
   requestDetailsSchema,
   reviewNoteSchema,
@@ -443,6 +444,74 @@ export async function setRequestArchived(requestId: string, archived: boolean): 
   if (!data) return fail(staleState);
 
   revalidatePath(`/app/requests/${requestId}`);
+  return { ok: true };
+}
+
+/** Staff's message on an item: one held email per contact, sent at once. */
+export async function postStaffMessage(itemId: string, body: string): Promise<ActionResult> {
+  const staff = await requireStaff();
+  if (!isId(itemId)) return fail(notFound);
+  const parsed = itemMessageSchema.safeParse(body);
+  if (!parsed.success) return invalid(parsed.error);
+
+  const supabase = await createClient();
+  const [item, firm] = await Promise.all([
+    supabase
+      .from("request_items")
+      .select("title, request_id")
+      .eq("id", itemId)
+      .eq("firm_id", staff.firmId)
+      .maybeSingle(),
+    supabase.from("firms").select("name").eq("id", staff.firmId).single(),
+  ]);
+  if (item.error) return fail(item.error);
+  if (firm.error) return fail(firm.error);
+  if (!item.data) return fail(notFound);
+
+  // Built before changing anything, so a configuration error posts nothing.
+  const content = itemMessageEmail({
+    firmName: firm.data.name,
+    itemTitle: item.data.title,
+    message: parsed.data,
+    requestId: item.data.request_id,
+  });
+
+  const { data: queued, error } = await supabase.rpc("post_item_message", { item_id: itemId, body: parsed.data });
+  if (error) return fail(error);
+
+  const messages = queued.map((row) => ({
+    ...content,
+    to: row.recipient,
+    fromName: firm.data.name,
+    replyTo: staff.email,
+    emailId: row.email_id,
+  }));
+  after(() => deliver(supabase, messages));
+
+  revalidatePath(`/app/requests/${item.data.request_id}`);
+  revalidatePath("/app", "layout");
+  return { ok: true };
+}
+
+/** Clears the item's unread client messages for the whole firm. */
+export async function markItemMessagesRead(itemId: string): Promise<ActionResult> {
+  const staff = await requireStaff();
+  if (!isId(itemId)) return fail(notFound);
+  const supabase = await createClient();
+  const { data: item, error: itemError } = await supabase
+    .from("request_items")
+    .select("request_id")
+    .eq("id", itemId)
+    .eq("firm_id", staff.firmId)
+    .maybeSingle();
+  if (itemError) return fail(itemError);
+  if (!item) return fail(notFound);
+
+  const { error } = await supabase.rpc("mark_item_messages_read", { item_id: itemId });
+  if (error) return fail(error);
+
+  revalidatePath(`/app/requests/${item.request_id}`);
+  revalidatePath("/app", "layout");
   return { ok: true };
 }
 

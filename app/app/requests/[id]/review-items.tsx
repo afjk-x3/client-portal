@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useId, useLayoutEffect, useRef, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
+import { ItemThread, type ThreadMessage } from "@/components/item-thread";
 import { ItemStatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -18,7 +19,10 @@ import type { ActionResult } from "@/lib/errors";
 import { submitKeepingValues } from "@/lib/forms";
 import { removeFile } from "@/app/portal/requests/[id]/actions";
 import { rejection, uploadFile } from "@/app/portal/requests/[id]/upload";
-import { acceptItem, removeItem, returnItem } from "../actions";
+import { acceptItem, markItemMessagesRead, postStaffMessage, removeItem, returnItem } from "../actions";
+
+const subscribe = () => () => {};
+const locationHash = () => window.location.hash;
 
 export type ReviewItem = {
   id: string;
@@ -32,6 +36,8 @@ export type ReviewItem = {
   unavailableReason: string | null;
   /** Formatted on the server in the firm's time zone. */
   submitted: string | null;
+  /** The conversation, oldest first; author is the display name the thread shows. */
+  messages: ThreadMessage[];
   /** byStaff: added by the firm; staff can remove only these. */
   files: { id: string; filename: string; sizeBytes: number; byStaff: boolean }[];
 };
@@ -41,7 +47,15 @@ export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; ed
   const [openId, setOpenId] = useState<string | null>(null);
   // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open Sheet.
   useLayoutEffect(() => () => setOpenId(null), []);
-  const selected = items.find((item) => item.id === openId);
+  // A dashboard link with #item-{id} opens that item's Sheet on arrival; rows open the rest.
+  const hashId = useSyncExternalStore(subscribe, locationHash, () => "");
+  const hashItem = /^#item-(.+)$/.exec(hashId)?.[1] ?? null;
+  const selected = items.find((item) => item.id === (openId ?? hashItem));
+  const close = () => {
+    setOpenId(null);
+    // Drop the anchor too, so a closed Sheet cannot reopen from it.
+    if (window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
+  };
 
   return (
     <>
@@ -57,7 +71,7 @@ export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; ed
           </TableHeader>
           <TableBody>
             {items.map((item, index) => (
-              <TableRow key={item.id} className="cursor-pointer" onClick={() => setOpenId(item.id)}>
+              <TableRow key={item.id} id={`item-${item.id}`} className="cursor-pointer" onClick={() => setOpenId(item.id)}>
                 <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                 <TableCell>
                   <button type="button" className="text-left font-medium underline-offset-4 hover:underline">
@@ -77,11 +91,9 @@ export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; ed
           </TableBody>
         </Table>
       </div>
-      <Sheet open={selected !== undefined} onOpenChange={(next) => !next && setOpenId(null)}>
+      <Sheet open={selected !== undefined} onOpenChange={(next) => !next && close()}>
         <SheetContent className="overflow-y-auto">
-          {selected && (
-            <ItemDetails item={selected} editable={editable} open={open} onRemoved={() => setOpenId(null)} />
-          )}
+          {selected && <ItemDetails item={selected} editable={editable} open={open} onRemoved={close} />}
         </SheetContent>
       </Sheet>
     </>
@@ -173,6 +185,29 @@ function ItemDetails({
           <AlertTitle>Review note</AlertTitle>
           <AlertDescription className="whitespace-pre-wrap">{item.reviewNote}</AlertDescription>
         </Alert>
+      )}
+      {(editable || item.messages.length > 0) && (
+        <div className="flex flex-col gap-3 border-t pt-4">
+          <h3 className="text-sm font-medium">Messages</h3>
+          <ItemThread
+            messages={item.messages}
+            canWrite={editable}
+            label="Write to the client"
+            hint="The client's contacts get this by email."
+            send={(body) => postStaffMessage(item.id, body)}
+          />
+          {item.messages.some((message) => message.isNew) && (
+            <ActionButton
+              variant="outline"
+              size="sm"
+              className="self-start"
+              action={() => markItemMessagesRead(item.id)}
+              success="Marked as read."
+            >
+              Mark as read
+            </ActionButton>
+          )}
+        </div>
       )}
       <div className="flex flex-col gap-4 border-t pt-4">
         {canAccept && (

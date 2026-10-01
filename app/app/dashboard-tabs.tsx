@@ -27,6 +27,18 @@ type ReadyRow = {
   submitted: string;
 };
 
+type MessageRow = {
+  requestId: string;
+  itemId: string;
+  client: string;
+  request: string;
+  item: string;
+  /** The item's newest unread client message, cut to 100 characters. */
+  latest: string;
+  /** Formatted on the server in the firm's time zone. */
+  at: string;
+};
+
 const waitingColumns: DataTableColumn<WaitingRow>[] = [
   { accessorKey: "client", header: "Client" },
   {
@@ -75,12 +87,48 @@ const readyColumns: DataTableColumn<ReadyRow>[] = [
   { accessorKey: "submitted", header: "Submitted" },
 ];
 
-export function DashboardTabs({ waiting, ready }: { waiting: WaitingRow[]; ready: ReadyRow[] }) {
+const messageColumns: DataTableColumn<MessageRow>[] = [
+  { accessorKey: "client", header: "Client" },
+  {
+    id: "request",
+    header: "Request",
+    cell: ({ row }) => (
+      <Link className="font-medium underline-offset-4 hover:underline" href={`/app/requests/${row.original.requestId}`}>
+        {row.original.request}
+      </Link>
+    ),
+  },
+  {
+    id: "item",
+    header: "Item",
+    cell: ({ row }) => (
+      <Link
+        className="font-medium underline-offset-4 hover:underline"
+        href={`/app/requests/${row.original.requestId}#item-${row.original.itemId}`}
+      >
+        {row.original.item}
+      </Link>
+    ),
+  },
+  { accessorKey: "latest", header: "Message" },
+  { accessorKey: "at", header: "Written" },
+];
+
+export function DashboardTabs({
+  waiting,
+  ready,
+  messages,
+}: {
+  waiting: WaitingRow[];
+  ready: ReadyRow[];
+  messages: MessageRow[];
+}) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const hit = (...fields: string[]) => needle === "" || fields.some((field) => field.toLowerCase().includes(needle));
   const shownWaiting = waiting.filter((row) => hit(row.client, row.title));
   const shownReady = ready.filter((row) => hit(row.client, row.request, row.item));
+  const shownMessages = messages.filter((row) => hit(row.client, row.request, row.item));
 
   return (
     <div className="flex flex-col gap-4">
@@ -96,12 +144,16 @@ export function DashboardTabs({ waiting, ready }: { waiting: WaitingRow[]; ready
         <TabsList>
           <TabsTrigger value="waiting">Waiting on clients ({shownWaiting.length})</TabsTrigger>
           <TabsTrigger value="ready">Ready for review ({shownReady.length})</TabsTrigger>
+          <TabsTrigger value="messages">Messages ({shownMessages.length})</TabsTrigger>
         </TabsList>
         <TabsContent value="waiting">
           <DataTable columns={waitingColumns} data={shownWaiting} emptyMessage="No client is holding up a request." />
         </TabsContent>
         <TabsContent value="ready">
           <DataTable columns={readyColumns} data={shownReady} emptyMessage="Nothing to review." />
+        </TabsContent>
+        <TabsContent value="messages">
+          <DataTable columns={messageColumns} data={shownMessages} emptyMessage="No new messages." />
         </TabsContent>
       </Tabs>
     </div>
