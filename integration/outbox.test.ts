@@ -41,7 +41,10 @@ async function rows<T>(query: PromiseLike<{ data: T; error: null } | { data: nul
 }
 
 /** Queues one held row directly, as an action or the daily job would leave one. */
-async function seed(kind: "request_sent" | "reminder", extra: { request_id: string; reply_to_id?: string; failures?: number }) {
+async function seed(
+  kind: "request_sent" | "reminder" | "item_message",
+  extra: { request_id: string; item_id?: string; reply_to_id?: string; failures?: number },
+) {
   const [row] = await rows(
     admin
       .from("email_outbox")
@@ -50,12 +53,19 @@ async function seed(kind: "request_sent" | "reminder", extra: { request_id: stri
         kind,
         recipient: contact1,
         request_id: extra.request_id,
+        item_id: extra.item_id ?? null,
         reply_to_id: extra.reply_to_id ?? null,
         failures: extra.failures ?? 0,
         send_after: new Date(Date.now() - 60_000).toISOString(),
       })
       .select("id"),
   );
+  return row.id;
+}
+
+/** The single "Open item" beforeAll gives each request. */
+async function itemIdOf(requestId: string) {
+  const [row] = await rows(admin.from("request_items").select("id").eq("request_id", requestId).eq("title", "Open item"));
   return row.id;
 }
 
@@ -342,4 +352,83 @@ it("records an action's send through the signed-in staff member's own session", 
 
   expect(capture.sent).toHaveLength(1);
   expect(await queued(held[0].email_id)).toBeNull();
+}, 120_000);
+
+it("sends an item_message with the item's latest staff message", async () => {
+  freshCapture();
+  const itemId = await itemIdOf(requestIds.Open);
+  await rows(
+    admin.from("item_messages").insert([
+      {
+        firm_id: firm,
+        client_id: client,
+        request_id: requestIds.Open,
+        item_id: itemId,
+        author_id: users.staff.id,
+        author_name: "staff",
+        by_staff: true,
+        body: "First answer",
+        created_at: "2031-03-10T10:00:00.000Z",
+      },
+      {
+        firm_id: firm,
+        client_id: client,
+        request_id: requestIds.Open,
+        item_id: itemId,
+        author_id: users.staff.id,
+        author_name: "staff",
+        by_staff: true,
+        body: "Latest answer",
+        created_at: "2031-03-10T12:00:00.000Z",
+      },
+    ]),
+  );
+  const id = await seed("item_message", { request_id: requestIds.Open, item_id: itemId, reply_to_id: users.staff.id });
+
+  const summary = await runDailyJobs(admin, now);
+
+  expect(summary.outbox).toEqual({ sent: 1, retrying: 0, gaveUp: 0, dropped: 0 });
+  expect(await queued(id)).toBeNull();
+  const [mail] = capture.sent;
+  expect(mail.subject).toBe(`Outbox ${tag} sent you a message about Open item`);
+  expect(mail.text).toContain("Latest answer");
+  expect(mail.text).not.toContain("First answer");
+  expect(mail.replyTo).toBe(users.staff.email);
+}, 120_000);
+
+it("drops an item_message whose request is archived", async () => {
+  freshCapture();
+  const id = await seed("item_message", { request_id: requestIds.Archived, item_id: await itemIdOf(requestIds.Archived) });
+
+  const summary = await runDailyJobs(admin, now);
+
+  expect(summary.outbox).toEqual({ sent: 0, retrying: 0, gaveUp: 0, dropped: 1 });
+  expect(await queued(id)).toBeNull();
+  expect(capture.sent).toHaveLength(0);
+}, 120_000);
+
+it("sends a digest with only a new client message", async () => {
+  freshCapture();
+  const itemId = await itemIdOf(requestIds.Open);
+  await rows(
+    admin.from("item_messages").insert({
+      firm_id: firm,
+      client_id: client,
+      request_id: requestIds.Open,
+      item_id: itemId,
+      author_id: users.contact1.id,
+      author_name: "contact1",
+      by_staff: false,
+      body: "Which bank?",
+      created_at: "2031-03-10T12:30:00.000Z",
+    }),
+  );
+
+  const summary = await runDailyJobs(admin, now);
+
+  expect(summary.digests).toBe(1);
+  expect(summary.outbox).toEqual({ sent: 1, retrying: 0, gaveUp: 0, dropped: 0 });
+  const [mail] = capture.sent;
+  expect(mail.subject).toBe(`1 new message at Outbox ${tag}`);
+  expect(mail.text).toContain("Open item (1 new message)");
 }, 120_000);

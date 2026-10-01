@@ -68,10 +68,11 @@ async function reminders(admin: Admin, firm: Firm, today: string): Promise<Notif
 }
 
 /**
- * Each member's digest of the items submitted since their previous digest
- * claim, or in the last 24 hours if there is none, so a missed day is covered.
- * Only claims made since the member joined count, so someone who changes firms
- * starts fresh. Members with nothing new get no digest.
+ * Each member's digest of the items submitted and client messages written
+ * since their previous digest claim, or in the last 24 hours if there is none,
+ * so a missed day is covered. Only claims made since the member joined count,
+ * so someone who changes firms starts fresh. Members with nothing new get no
+ * digest.
  */
 async function digests(admin: Admin, firm: Firm, members: Member[], today: string, now: Date): Promise<Notification[]> {
   const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
@@ -96,22 +97,36 @@ async function digests(admin: Admin, firm: Firm, members: Member[], today: strin
   const windows = Map.groupBy(members, (_member, index) => starts[index]);
   const results = await Promise.all(
     [...windows].map(async ([start, windowMembers]) => {
-      const items = await readAll((last?: { id: string; submitted_at: string | null }) => {
-        const query = admin
-          .from("request_items")
-          .select("id, submitted_at")
-          .eq("firm_id", firm.id)
-          .gt("submitted_at", start)
-          .lte("submitted_at", now.toISOString())
-          .order("submitted_at")
-          .order("id")
-          .limit(PAGE_SIZE);
-        // After the previous page's last (submitted_at, id); items can share a timestamp.
-        return last
-          ? query.or(`submitted_at.gt."${last.submitted_at}",and(submitted_at.eq."${last.submitted_at}",id.gt.${last.id})`)
-          : query;
-      });
-      if (items.length === 0) return [];
+      const [items, messages] = await Promise.all([
+        readAll((last?: { id: string; submitted_at: string | null }) => {
+          const query = admin
+            .from("request_items")
+            .select("id, submitted_at")
+            .eq("firm_id", firm.id)
+            .gt("submitted_at", start)
+            .lte("submitted_at", now.toISOString())
+            .order("submitted_at")
+            .order("id")
+            .limit(PAGE_SIZE);
+          // After the previous page's last (submitted_at, id); items can share a timestamp.
+          return last
+            ? query.or(`submitted_at.gt."${last.submitted_at}",and(submitted_at.eq."${last.submitted_at}",id.gt.${last.id})`)
+            : query;
+        }),
+        readAll((last?: { id: string }) =>
+          admin
+            .from("item_messages")
+            .select("id")
+            .eq("firm_id", firm.id)
+            .eq("by_staff", false)
+            .gt("created_at", start)
+            .lte("created_at", now.toISOString())
+            .gt("id", last?.id ?? NIL_UUID)
+            .order("id")
+            .limit(PAGE_SIZE),
+        ),
+      ]);
+      if (items.length === 0 && messages.length === 0) return [];
 
       return windowMembers.map(
         (member): Notification => ({

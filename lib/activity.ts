@@ -23,6 +23,7 @@ function emailLabel(email: unknown, item: string): string {
   if (email === "request_sent") return "the request email";
   if (email === "needs_changes") return `the changes-needed email for ${quoted(item)}`;
   if (email === "reminder") return "the reminder";
+  if (email === "item_message") return `the message about ${quoted(item)}`;
   return String(email);
 }
 

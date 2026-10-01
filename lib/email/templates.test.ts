@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  itemMessageEmail,
   needsChangesEmail,
   reminderEmail,
   requestSentEmail,
@@ -29,7 +30,9 @@ const templates = {
     staffDigestEmail({
       firmName: evil,
       groups: [{ clientName: evil, requestTitle: evil, requestId: "r1", items: [{ title: evil, unavailable: false }] }],
+      messages: [{ clientName: evil, requestTitle: evil, requestId: "r1", items: [{ title: evil, count: 2 }] }],
     }),
+  itemMessage: () => itemMessageEmail({ firmName: evil, itemTitle: evil, message: evil, requestId: "r1" }),
 };
 
 describe("email templates", () => {
@@ -103,6 +106,39 @@ describe("email templates", () => {
     expect(email.html).toContain("<li>Bank statement</li>");
     expect(email.html).toContain("<li>&lt;b&gt;Payslip&lt;/b&gt; (not available)</li>");
     expect(email.text).toContain("<b>Payslip</b> (not available)");
+  });
+
+  it("sends a message email with the message escaped and its lines kept", () => {
+    const email = itemMessageEmail({
+      firmName: "Smith & Co",
+      itemTitle: "Bank statement",
+      message: "Hi <b>Pat</b>\nThe BDO one",
+      requestId: "r1",
+    });
+    expect(email.subject).toBe("Smith & Co sent you a message about Bank statement");
+    expect(email.html).toContain("Hi &lt;b&gt;Pat&lt;/b&gt;<br>The BDO one");
+    expect(email.text).toContain("Hi <b>Pat</b>\nThe BDO one");
+    expect(email.html).toContain('href="https://portal.example/portal/requests/r1"');
+  });
+
+  it("titles a digest of only new messages", () => {
+    const email = staffDigestEmail({
+      firmName: "Smith & Co",
+      groups: [],
+      messages: [{ clientName: "Pat Client", requestTitle: "2026 taxes", requestId: "r1", items: [{ title: "Bank statement", count: 2 }] }],
+    });
+    expect(email.subject).toBe("2 new messages at Smith & Co");
+    expect(email.html).toContain("New messages");
+    expect(email.text).toContain("Bank statement (2 new messages)");
+  });
+
+  it("titles a digest of items and messages together", () => {
+    const email = staffDigestEmail({
+      firmName: "Smith & Co",
+      groups: [{ clientName: "Pat Client", requestTitle: "2026 taxes", requestId: "r1", items: [{ title: "Pay slip", unavailable: false }] }],
+      messages: [{ clientName: "Pat Client", requestTitle: "2026 taxes", requestId: "r1", items: [{ title: "Bank statement", count: 1 }] }],
+    });
+    expect(email.subject).toBe("1 item submitted and 1 new message at Smith & Co");
   });
 
   it("fails clearly when the site URL is missing", () => {

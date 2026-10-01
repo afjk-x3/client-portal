@@ -55,6 +55,13 @@ describe("describeEvent", () => {
     expect(describeEvent("email_sent_late", { email: "reminder", to: "maria@example.com" }, "")).toBe(
       "sent the reminder to maria@example.com after an earlier failure.",
     );
+    expect(
+      describeEvent(
+        "email_failed",
+        { email: "item_message", to: "pat@example.com", reason: "connection problem", outcome: "retrying" },
+        "Bank statement",
+      ),
+    ).toBe("couldn't send the message about “Bank statement” to pat@example.com (connection problem). Trying again tomorrow.");
   });
 });
 

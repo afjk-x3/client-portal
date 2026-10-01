@@ -96,6 +96,26 @@ export function needsChangesEmail(input: {
   };
 }
 
+export function itemMessageEmail(input: {
+  firmName: string;
+  itemTitle: string;
+  message: string;
+  requestId: string;
+}): EmailContent {
+  const link = siteUrl(`/portal/requests/${input.requestId}`);
+  return {
+    subject: subjectLine(`${input.firmName} sent you a message about ${input.itemTitle}`),
+    html: html(
+      [
+        `${escapeHtml(input.firmName)} sent you a message about <strong>${escapeHtml(input.itemTitle)}</strong>:`,
+        escapeHtml(input.message).replace(/\r?\n/g, "<br>"),
+      ],
+      { href: link, label: "Open the request" },
+    ),
+    text: `${input.firmName} sent you a message about ${input.itemTitle}:\n\n${input.message}\n\nOpen the request: ${link}`,
+  };
+}
+
 export function reminderEmail(input: {
   firmName: string;
   title: string;
@@ -134,32 +154,84 @@ function digestLabel(item: { title: string; unavailable: boolean }): string {
   return `${item.title}${item.unavailable ? " (not available)" : ""}`;
 }
 
-export function staffDigestEmail(input: { firmName: string; groups: DigestGroup[] }): EmailContent {
+export type DigestMessageGroup = {
+  clientName: string;
+  requestTitle: string;
+  requestId: string;
+  items: { title: string; count: number }[];
+};
+
+function newMessagesLabel(item: { title: string; count: number }): string {
+  return `${item.title} (${item.count} new ${item.count === 1 ? "message" : "messages"})`;
+}
+
+export function staffDigestEmail(input: {
+  firmName: string;
+  groups: DigestGroup[];
+  messages?: DigestMessageGroup[];
+}): EmailContent {
+  const messages = input.messages ?? [];
   const count = input.groups.reduce((sum, group) => sum + group.items.length, 0);
+  const messageCount = messages.reduce(
+    (sum, group) => sum + group.items.reduce((inner, item) => inner + item.count, 0),
+    0,
+  );
   const noun = count === 1 ? "item" : "items";
+  const messageNoun = messageCount === 1 ? "message" : "messages";
   const dashboard = siteUrl("/app");
-  return {
-    subject: subjectLine(`${count} ${noun} submitted at ${input.firmName}`),
-    html: html(
-      [
-        `Clients submitted ${count} ${noun} since the last digest:`,
-        ...input.groups.flatMap((group) => [
-          `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
-            `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
-          list(group.items.map(digestLabel)),
-        ]),
-      ],
-      { href: dashboard, label: "Open the dashboard" },
-    ),
-    text:
+  const subject =
+    messageCount === 0
+      ? `${count} ${noun} submitted at ${input.firmName}`
+      : count === 0
+        ? `${messageCount} new ${messageNoun} at ${input.firmName}`
+        : `${count} ${noun} submitted and ${messageCount} new ${messageNoun} at ${input.firmName}`;
+
+  const blocks: string[] = [];
+  const sections: string[] = [];
+  if (input.groups.length > 0) {
+    blocks.push(`Clients submitted ${count} ${noun} since the last digest:`);
+    sections.push(
       `Clients submitted ${count} ${noun} since the last digest:\n\n` +
-      input.groups
-        .map(
-          (group) =>
-            `${group.clientName}: ${group.requestTitle}\n${siteUrl(`/app/requests/${group.requestId}`)}\n` +
-            group.items.map((item) => `- ${digestLabel(item)}`).join("\n"),
-        )
-        .join("\n\n") +
-      `\n\nOpen the dashboard: ${dashboard}`,
+        input.groups
+          .map(
+            (group) =>
+              `${group.clientName}: ${group.requestTitle}\n${siteUrl(`/app/requests/${group.requestId}`)}\n` +
+              group.items.map((item) => `- ${digestLabel(item)}`).join("\n"),
+          )
+          .join("\n\n"),
+    );
+    blocks.push(
+      ...input.groups.flatMap((group) => [
+        `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
+          `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
+        list(group.items.map(digestLabel)),
+      ]),
+    );
+  }
+  if (messages.length > 0) {
+    blocks.push("<strong>New messages</strong>");
+    sections.push(
+      `New messages:\n\n` +
+        messages
+          .map(
+            (group) =>
+              `${group.clientName}: ${group.requestTitle}\n${siteUrl(`/app/requests/${group.requestId}`)}\n` +
+              group.items.map((item) => `- ${newMessagesLabel(item)}`).join("\n"),
+          )
+          .join("\n\n"),
+    );
+    blocks.push(
+      ...messages.flatMap((group) => [
+        `<a href="${escapeHtml(siteUrl(`/app/requests/${group.requestId}`))}">` +
+          `${escapeHtml(group.clientName)}: ${escapeHtml(group.requestTitle)}</a>`,
+        list(group.items.map(newMessagesLabel)),
+      ]),
+    );
+  }
+
+  return {
+    subject: subjectLine(subject),
+    html: html(blocks, { href: dashboard, label: "Open the dashboard" }),
+    text: `${sections.join("\n\n")}\n\nOpen the dashboard: ${dashboard}`,
   };
 }
