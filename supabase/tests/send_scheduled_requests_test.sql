@@ -3,7 +3,7 @@
 -- once per date, labels from the scheduled date, late sends jump ahead,
 -- and only the service role may call it.
 begin;
-select plan(22);
+select plan(24);
 \ir fixtures/seed.psql
 
 insert into public.schedules (id, firm_id, template_id, title, every_months, day_of_month, next_send_on, due_after_days, created_by, paused)
@@ -39,6 +39,16 @@ from (values
   ('50000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-0000000000a1'),
   ('50000000-0000-0000-0000-000000000008', 'c0000000-0000-0000-0000-0000000000a1')
 ) as s(schedule_id, client_id);
+
+insert into public.clients (id, firm_id, name)
+values ('c0000000-0000-0000-0000-0000000000a3', 'f0000000-0000-0000-0000-00000000000a', 'Client A3');
+insert into public.schedules (id, firm_id, template_id, title, every_months, day_of_month, next_send_on, due_after_days, created_by, paused)
+values ('50000000-0000-0000-0000-000000000009', 'f0000000-0000-0000-0000-00000000000a',
+        '70000000-0000-0000-0000-00000000000a', 'No contacts', 1, 1, '2027-10-01', 14,
+        '00000000-0000-0000-0000-0000000000a1', false);
+insert into public.schedule_clients (schedule_id, client_id, firm_id) values
+  ('50000000-0000-0000-0000-000000000009', 'c0000000-0000-0000-0000-0000000000a1', 'f0000000-0000-0000-0000-00000000000a'),
+  ('50000000-0000-0000-0000-000000000009', 'c0000000-0000-0000-0000-0000000000a3', 'f0000000-0000-0000-0000-00000000000a');
 
 set local role service_role;
 
@@ -94,6 +104,11 @@ select is(public.send_scheduled_requests('50000000-0000-0000-0000-000000000004',
 select is((select count(*) from public.requests
   where title = 'Archived client – September 2027' and client_id = 'c0000000-0000-0000-0000-0000000000a2'),
   0::bigint, 'and gets no request while the others get theirs');
+select is(public.send_scheduled_requests('50000000-0000-0000-0000-000000000009', date '2027-10-01'), 1,
+  'a client with no contacts is skipped');
+select is((select count(*) from public.requests
+  where title = 'No contacts – September 2027' and client_id = 'c0000000-0000-0000-0000-0000000000a3'),
+  0::bigint, 'and gets no request');
 select is(public.send_scheduled_requests('50000000-0000-0000-0000-000000000005', date '2027-10-01'), 0,
   'a paused schedule sends nothing');
 select is(public.send_scheduled_requests('50000000-0000-0000-0000-000000000006', date '2027-10-01'), 0,

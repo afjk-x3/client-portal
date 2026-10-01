@@ -15,7 +15,8 @@ export async function saveSchedule(input: z.input<typeof scheduleSchema>): Promi
   if (!parsed.success) return invalid(parsed.error);
   const { scheduleId, templateId, title, everyMonths, nextSendOn, dueAfterDays, clientIds } = parsed.data;
 
-  if (nextSendOn && nextSendOn <= todayIn(staff.timeZone)) {
+  // A create needs a date; an edit without one keeps its own.
+  if (nextSendOn ? nextSendOn <= todayIn(staff.timeZone) : !scheduleId) {
     return { ok: false, error: "Pick a date after today." };
   }
 

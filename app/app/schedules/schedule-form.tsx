@@ -105,7 +105,7 @@ export function ScheduleForm({
           </p>
         </div>
         <div className="flex flex-col gap-2">
-          <Label htmlFor={`${id}-due`}>Due after (days)</Label>
+          <Label htmlFor={`${id}-due`}>Due after</Label>
           <Input
             id={`${id}-due`}
             type="number"

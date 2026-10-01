@@ -84,7 +84,9 @@ export function ClientPicker({
       <p className="text-sm text-muted-foreground">
         {tooMany
           ? `Pick at most ${MAX_CLIENTS_PER_SEND} clients at a time.`
-          : "Only active clients with at least one contact are listed."}
+          : Object.keys(marks).length > 0
+            ? "Marked clients are skipped when the schedule sends."
+            : "Only active clients with at least one contact are listed."}
       </p>
     </div>
   );

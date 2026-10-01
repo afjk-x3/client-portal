@@ -11,6 +11,10 @@ describe("describeRepeat", () => {
     expect(describeRepeat(12, 15, "2027-01-15")).toBe("Yearly on Jan 15");
   });
 
+  it("keeps the rule day when the next send date is clamped", () => {
+    expect(describeRepeat(12, 29, "2028-02-28")).toBe("Yearly on Feb 29");
+  });
+
   it("ordinals the days", () => {
     const cases: [number, string][] = [
       [2, "nd"],

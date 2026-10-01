@@ -9,8 +9,10 @@ const ordinal = (n: number) => {
 /** How the Schedules page describes a repeat: "Monthly on the 1st". */
 export function describeRepeat(everyMonths: 1 | 3 | 12, dayOfMonth: number, nextSendOn: string): string {
   if (everyMonths === 12) {
-    const [, month, day] = nextSendOn.split("-");
-    return `Yearly on ${MONTHS[Number(month) - 1]} ${Number(day)}`;
+    // The month comes from the date (it never changes), the day from the rule,
+    // so a date clamped to Feb 28 still reads "Feb 29".
+    const [, month] = nextSendOn.split("-");
+    return `Yearly on ${MONTHS[Number(month) - 1]} ${dayOfMonth}`;
   }
   return `${everyMonths === 1 ? "Monthly" : "Quarterly"} on the ${dayOfMonth}${ordinal(dayOfMonth)}`;
 }

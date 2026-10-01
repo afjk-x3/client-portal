@@ -191,16 +191,20 @@ async function claimFirm(admin: Admin, firm: Firm, today: string, now: Date): Pr
  * role, so one failure keeps the earlier ones and fails the firm.
  */
 async function sendSchedules(admin: Admin, firm: Firm, today: string): Promise<number> {
-  const schedules = await admin
-    .from("schedules")
-    .select("id")
-    .eq("firm_id", firm.id)
-    .eq("paused", false)
-    .lte("next_send_on", today);
-  if (schedules.error) throw schedules.error;
+  const schedules = await readAll((last?: { id: string }) =>
+    admin
+      .from("schedules")
+      .select("id")
+      .eq("firm_id", firm.id)
+      .eq("paused", false)
+      .lte("next_send_on", today)
+      .gt("id", last?.id ?? NIL_UUID)
+      .order("id")
+      .limit(PAGE_SIZE),
+  );
 
   let scheduled = 0;
-  for (const { id } of schedules.data) {
+  for (const { id } of schedules) {
     const { data, error } = await admin.rpc("send_scheduled_requests", { schedule_id: id, today });
     if (error) throw error;
     scheduled += data;
