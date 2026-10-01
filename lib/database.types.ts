@@ -290,6 +290,56 @@ export type Database = {
           },
         ]
       }
+      item_messages: {
+        Row: {
+          author_id: string
+          author_name: string
+          body: string
+          by_staff: boolean
+          client_id: string
+          created_at: string
+          firm_id: string
+          id: string
+          item_id: string
+          read_at: string | null
+          request_id: string
+        }
+        Insert: {
+          author_id: string
+          author_name: string
+          body: string
+          by_staff: boolean
+          client_id: string
+          created_at?: string
+          firm_id: string
+          id?: string
+          item_id: string
+          read_at?: string | null
+          request_id: string
+        }
+        Update: {
+          author_id?: string
+          author_name?: string
+          body?: string
+          by_staff?: boolean
+          client_id?: string
+          created_at?: string
+          firm_id?: string
+          id?: string
+          item_id?: string
+          read_at?: string | null
+          request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "item_messages_item_id_firm_id_fkey"
+            columns: ["item_id", "firm_id"]
+            isOneToOne: false
+            referencedRelation: "request_items"
+            referencedColumns: ["id", "firm_id"]
+          },
+        ]
+      }
       notes: {
         Row: {
           author_id: string
@@ -773,6 +823,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      mark_item_messages_read: { Args: { item_id: string }; Returns: undefined }
       mark_unavailable: {
         Args: { item_id: string; reason: string }
         Returns: undefined
@@ -789,6 +840,13 @@ export type Database = {
       orphaned_documents: {
         Args: { max_rows?: number; older_than?: string }
         Returns: string[]
+      }
+      post_item_message: {
+        Args: { body: string; item_id: string }
+        Returns: {
+          email_id: number
+          recipient: string
+        }[]
       }
       queue_request_emails: {
         Args: { item_id?: string; kind: string; request_id: string }
