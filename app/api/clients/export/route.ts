@@ -31,13 +31,20 @@ export async function GET(request: NextRequest) {
     }
 
     const contactsByClient = new Map<string, { full_name: string; email: string }[]>();
+    const idChunks: string[][] = [];
     for (let i = 0; i < clients.length; i += 200) {
-      const chunk = clients.slice(i, i + 200).map((client) => client.id);
-      const { data, error } = await supabase
-        .from("client_contacts")
-        .select("client_id, full_name, email")
-        .in("client_id", chunk)
-        .order("full_name");
+      idChunks.push(clients.slice(i, i + 200).map((client) => client.id));
+    }
+    const contactPages = await Promise.all(
+      idChunks.map((ids) =>
+        supabase
+          .from("client_contacts")
+          .select("client_id, full_name, email")
+          .in("client_id", ids)
+          .order("full_name"),
+      ),
+    );
+    for (const { data, error } of contactPages) {
       if (error) throw error;
       for (const contact of data) {
         const list = contactsByClient.get(contact.client_id) ?? [];

@@ -1,14 +1,17 @@
 "use client";
 
-import { tableFeatures, useTable, type ColumnDef, type RowData } from "@tanstack/react-table";
+import type { ReactNode } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-const features = tableFeatures({});
-
-export type DataTableColumn<TData extends RowData> = ColumnDef<typeof features, TData>;
+export type DataTableColumn<TData> = {
+  id?: string;
+  accessorKey?: keyof TData & string;
+  header: string | (() => ReactNode);
+  cell?: (context: { row: { original: TData } }) => ReactNode;
+};
 
 /** Renders rows in the order given; callers sort and filter the data. */
-export function DataTable<TData extends RowData>({
+export function DataTable<TData>({
   columns,
   data,
   emptyMessage,
@@ -17,31 +20,30 @@ export function DataTable<TData extends RowData>({
   data: TData[];
   emptyMessage: string;
 }) {
-  const table = useTable({ features, columns, data });
-  const rows = table.getRowModel().rows;
+  const cellValue = (column: DataTableColumn<TData>, row: TData): ReactNode => {
+    if (column.cell) return column.cell({ row: { original: row } });
+    const value = column.accessorKey === undefined ? undefined : row[column.accessorKey];
+    return value == null ? null : String(value);
+  };
 
   return (
     <div className="rounded-md border">
       <Table>
         <TableHeader>
-          {table.getHeaderGroups().map((group) => (
-            <TableRow key={group.id}>
-              {group.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder ? null : <table.FlexRender header={header} />}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
+          <TableRow>
+            {columns.map((column) => (
+              <TableHead key={column.id ?? String(column.accessorKey)}>
+                {typeof column.header === "function" ? column.header() : column.header}
+              </TableHead>
+            ))}
+          </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.length > 0 ? (
-            rows.map((row) => (
-              <TableRow key={row.id}>
-                {row.getAllCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    <table.FlexRender cell={cell} />
-                  </TableCell>
+          {data.length > 0 ? (
+            data.map((row, index) => (
+              <TableRow key={index}>
+                {columns.map((column) => (
+                  <TableCell key={column.id ?? String(column.accessorKey)}>{cellValue(column, row)}</TableCell>
                 ))}
               </TableRow>
             ))

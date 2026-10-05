@@ -59,7 +59,7 @@ export function AppSidebar({ firmName, userName }: { firmName: string; userName:
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className={process.env.NODE_ENV !== "production" ? "mb-10" : undefined}>
         <p className="truncate px-2 text-sm text-muted-foreground">{userName}</p>
         <form action="/auth/sign-out" method="post">
           <SidebarMenuButton type="submit">

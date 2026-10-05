@@ -160,6 +160,7 @@ export function ScanDialog({ itemTitle, onPdf }: { itemTitle: string; onPdf: (fi
             <ul className="flex flex-col gap-2">
               {pages.map((page, index) => (
                 <li key={page.url} className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- blob preview URLs cannot use the Next image loader */}
                   <img
                     src={page.url}
                     alt={`Page ${index + 1}: ${page.name}`}
