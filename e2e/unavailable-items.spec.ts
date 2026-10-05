@@ -26,7 +26,8 @@ test("a contact answers that they don't have a document", async ({ browser }) =>
   await expect(
     contact.getByText("You told Ledger & Co you don't have this: “No investment account this year”"),
   ).toBeVisible();
-  await expect(contact.getByText("Submitted", { exact: true })).toBeVisible();
+  // The F4 badge: a submitted-with-reason item reads "Not available", not "Submitted".
+  await expect(contact.getByText("Not available", { exact: true })).toBeVisible();
   await expect(contact.getByText("Choose files or drag them here")).toHaveCount(0);
 
   // Staff see the answer as ready for review, marked "Not available".
@@ -47,7 +48,8 @@ test("a contact answers that they don't have a document", async ({ browser }) =>
   // Staff send it back with a note.
   await sheet.getByRole("textbox", { name: "What needs to change?" }).fill("Please check your bank app");
   await sheet.getByRole("button", { name: "Needs changes" }).click();
-  await expect(sheet.getByText("Needs changes", { exact: true })).toBeVisible();
+  // Wait for the server action's success toast (the button label alone is visible pre-commit).
+  await expectToast(staff, "Returned to the client with your note.");
   await staff.keyboard.press("Escape");
 
   // The contact sees the note and answers again.

@@ -50,11 +50,16 @@ export function Notes({
         Notes
       </h2>
       <AddNote clientId={clientId} requestId={requestId} />
-      <ol className="flex flex-col gap-4">
-        {notes.map((note) => (
-          <NoteItem key={note.id} note={note} />
-        ))}
-      </ol>
+      {notes.length > 0 && (
+        <div className="flex flex-col gap-3 border-t pt-3">
+          <h3 className="text-sm font-medium text-muted-foreground">Previous notes</h3>
+          <ol className="flex flex-col gap-4">
+            {notes.map((note) => (
+              <NoteItem key={note.id} note={note} />
+            ))}
+          </ol>
+        </div>
+      )}
       {olderHidden && <p className="text-sm text-muted-foreground">Older notes are not shown.</p>}
     </section>
   );
@@ -114,7 +119,7 @@ function NoteItem({ note }: { note: NoteRow }) {
           )}
           {note.own && (
             <div className="mt-1 flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
                 Edit
               </Button>
               <DeleteNote noteId={note.id} />
@@ -172,7 +177,7 @@ function DeleteNote({ noteId }: { noteId: string }) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={pending}>
+        <Button variant="ghost" size="sm" disabled={pending}>
           Delete
         </Button>
       </AlertDialogTrigger>

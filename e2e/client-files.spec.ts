@@ -38,7 +38,8 @@ test("every file of a client's requests is listed, even from archived ones", asy
   await page.getByRole("link", { name: "2025 taxes", exact: true }).click();
   // Wait for the request page, or "Archive" resolves on the client page still mounted underneath.
   await expect(page).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
   await expectToast(page, "Request archived. Reminders have stopped.");
   await page.getByRole("link", { name: "Rita Client", exact: true }).click();
 

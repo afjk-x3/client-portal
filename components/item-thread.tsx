@@ -86,9 +86,24 @@ export function ItemThread({
             required
           />
           {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
-          <Button type="submit" className="self-start" disabled={pending}>
-            Send
-          </Button>
+          <div className="flex items-center gap-2 self-start">
+            <Button type="submit" disabled={pending}>
+              Send
+            </Button>
+            {emptyButton != null && messages.length === 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => {
+                  setBody("");
+                  setOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
         </form>
       )}
     </div>

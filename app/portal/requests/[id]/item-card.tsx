@@ -6,6 +6,7 @@ import { ActionButton } from "@/components/action-button";
 import { ItemThread, type ThreadMessage } from "@/components/item-thread";
 import { ItemStatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +14,7 @@ import { LIMITS, MAX_FILES_PER_ITEM } from "@/lib/constants";
 import type { ActionResult } from "@/lib/errors";
 import { ACCEPT_ATTRIBUTE, formatSize } from "@/lib/files";
 import { submitKeepingValues } from "@/lib/forms";
-import { removeFile, markUnavailable, postItemMessage, submitItem } from "./actions";
+import { removeFile, markUnavailable, postItemMessage, submitItem, undoUnavailable } from "./actions";
 import { ScanDialog } from "./scan-dialog";
 import { rejection, uploadFile } from "./upload";
 
@@ -47,6 +48,7 @@ export function ItemCard({
   // ponytail: optional items lock when a request completes. Upgrade path: allow
   // optional submissions on completed requests.
   const editable = requestOpen && (item.status === "requested" || item.status === "needs_changes");
+  const [answering, setAnswering] = useState(false);
 
   return (
     <Card>
@@ -54,7 +56,11 @@ export function ItemCard({
         <CardTitle>{item.title}</CardTitle>
         <CardDescription>{item.required ? "Required" : "Optional"}</CardDescription>
         <CardAction>
-          <ItemStatusBadge status={item.status} />
+          {item.status === "submitted" && item.unavailableReason ? (
+            <Badge variant="secondary">Not available</Badge>
+          ) : (
+            <ItemStatusBadge status={item.status} />
+          )}
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -66,17 +72,19 @@ export function ItemCard({
           </Alert>
         )}
         {item.kind === "file" ? (
-          <FileItem item={item} editable={editable} firmName={firmName} />
+          <FileItem item={item} editable={editable} firmName={firmName} answering={answering} setAnswering={setAnswering} />
         ) : (
           <TextItem item={item} editable={editable} />
         )}
-        <ItemThread
-          messages={messages}
-          canWrite={canWrite}
-          label="Write a message"
-          send={(body) => postItemMessage(item.id, body)}
-          emptyButton="Ask a question"
-        />
+        {(!answering || !editable) && (
+          <ItemThread
+            messages={messages}
+            canWrite={canWrite}
+            label="Write a message"
+            send={(body) => postItemMessage(item.id, body)}
+            emptyButton="Ask a question"
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -84,10 +92,21 @@ export function ItemCard({
 
 type Upload = { key: string; file: File; status: "pending" | "uploading" | "failed"; error?: string };
 
-function FileItem({ item, editable, firmName }: { item: PortalItem; editable: boolean; firmName: string }) {
+function FileItem({
+  item,
+  editable,
+  firmName,
+  answering,
+  setAnswering,
+}: {
+  item: PortalItem;
+  editable: boolean;
+  firmName: string;
+  answering: boolean;
+  setAnswering: (value: boolean) => void;
+}) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [answering, setAnswering] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
 
   const [, formAction, pending] = useActionState(async (_prev: ActionResult | null, formData: FormData) => {
@@ -156,9 +175,22 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
   return (
     <div className="flex flex-col gap-3">
       {(item.status === "submitted" || item.status === "accepted") && item.unavailableReason && (
-        <p className="whitespace-pre-wrap text-sm">
-          You told {firmName} you don&apos;t have this: “{item.unavailableReason}”
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <p className="whitespace-pre-wrap text-sm">
+            You told {firmName} you don&apos;t have this: “{item.unavailableReason}”
+          </p>
+          {item.status === "submitted" && (
+            <ActionButton
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              action={() => undoUnavailable(item.id)}
+              success="You can upload the file now."
+            >
+              Undo
+            </ActionButton>
+          )}
+        </div>
       )}
       {item.files.length > 0 && (
         <ul className="flex flex-col gap-2">
@@ -251,11 +283,6 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
           <ScanDialog itemTitle={item.title} onPdf={(file) => addFiles([file])} />
         </>
       )}
-      {editable && item.files.length === 0 && uploads.length === 0 && !answering && (
-        <Button variant="outline" className="self-start" onClick={() => setAnswering(true)}>
-          I don&apos;t have this
-        </Button>
-      )}
       {editable && item.files.length === 0 && uploads.length === 0 && answering && (
         <form onSubmit={submitKeepingValues(formAction)} className="flex flex-col gap-2">
           <label htmlFor={`unavailable-${item.id}`} className="text-sm font-medium">
@@ -279,16 +306,22 @@ function FileItem({ item, editable, firmName }: { item: PortalItem; editable: bo
           </div>
         </form>
       )}
-      {editable && (
-        <ActionButton
-          className="self-start"
-          disabled={item.files.length === 0 || busy}
-          aria-label={`Submit ${item.title}`}
-          action={() => submitItem(item.id)}
-          success="Submitted. We'll let you know if anything else is needed."
-        >
-          Submit
-        </ActionButton>
+      {editable && !answering && (
+        <div className="flex items-center justify-end gap-2">
+          {item.files.length === 0 && uploads.length === 0 && (
+            <Button variant="ghost" onClick={() => setAnswering(true)}>
+              I don&apos;t have this
+            </Button>
+          )}
+          <ActionButton
+            disabled={item.files.length === 0 || busy}
+            aria-label={`Submit ${item.title}`}
+            action={() => submitItem(item.id)}
+            success="Submitted. We'll let you know if anything else is needed."
+          >
+            Submit
+          </ActionButton>
+        </div>
       )}
     </div>
   );

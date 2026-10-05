@@ -74,7 +74,8 @@ test("staff tick requests and archive them together", async ({ page }) => {
   const href = await page.getByRole("link", { name: "Q4 papers" }).getAttribute("href");
   const second = await page.context().newPage();
   await second.goto(href!);
-  await second.getByRole("button", { name: "Archive", exact: true }).click();
+  await second.getByRole("button", { name: "More actions" }).click();
+  await second.getByRole("menuitem", { name: "Archive", exact: true }).click();
   await expectToast(second, "Request archived. Reminders have stopped.");
   await second.close();
 

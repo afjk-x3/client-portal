@@ -19,8 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RequestStatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
-import { archiveResultMessage } from "./archive-message";
-import { archiveRequests } from "./actions";
+import { archiveResultMessage, unarchiveResultMessage } from "./archive-message";
+import { archiveRequests, unarchiveRequests } from "./actions";
 import { formatDate } from "@/lib/dates";
 
 export type RequestListRow = {
@@ -34,7 +34,7 @@ export type RequestListRow = {
   overdue: boolean;
 };
 
-const isSelectable = (row: RequestListRow) => row.status === "open" || row.status === "completed";
+const isSelectable = (row: RequestListRow) => row.status !== "draft";
 const plural = (count: number) => `${count} ${count === 1 ? "request" : "requests"}`;
 
 const columns: DataTableColumn<RequestListRow>[] = [
@@ -76,6 +76,13 @@ export function RequestsTable({ rows }: { rows: RequestListRow[] }) {
 
   const selectableIds = useMemo(() => rows.filter(isSelectable).map((row) => row.id), [rows]);
   const chosen = selectableIds.filter((id) => selected.has(id));
+  const rowsById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  const { toArchive, toUnarchive, openCount } = useMemo(() => {
+    const toArchive = chosen.filter((id) => rowsById.get(id)!.status !== "archived");
+    const toUnarchive = chosen.filter((id) => rowsById.get(id)!.status === "archived");
+    const openCount = toArchive.filter((id) => rowsById.get(id)!.status === "open").length;
+    return { toArchive, toUnarchive, openCount };
+  }, [chosen, rowsById]);
 
   const allColumns = useMemo<DataTableColumn<RequestListRow>[]>(() => {
     const selectColumn: DataTableColumn<RequestListRow> = {
@@ -119,7 +126,7 @@ export function RequestsTable({ rows }: { rows: RequestListRow[] }) {
   }, [selectableIds, chosen, selected]);
 
   function archive() {
-    const ids = [...selected];
+    const ids = toArchive;
     startTransition(async () => {
       const result = await archiveRequests(ids);
       if (!result.ok) {
@@ -131,31 +138,49 @@ export function RequestsTable({ rows }: { rows: RequestListRow[] }) {
     });
   }
 
-  const openCount = rows.filter((row) => selected.has(row.id) && row.status === "open").length;
+  function unarchive() {
+    const ids = toUnarchive;
+    startTransition(async () => {
+      const result = await unarchiveRequests(ids);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(unarchiveResultMessage(result.data?.unarchived ?? 0, ids.length));
+      setSelected(new Set());
+    });
+  }
 
   return (
     <>
-      {selected.size > 0 && (
+      {chosen.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">{selected.size} selected</span>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline">Archive {plural(selected.size)}</Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Archive {plural(selected.size)}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Reminders stop and clients can no longer upload or submit. You can unarchive any of them later.
-                  {openCount > 0 && ` ${openCount} of them are still open.`}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={archive}>Archive</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <span className="text-sm text-muted-foreground">{chosen.length} selected</span>
+          {toArchive.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline">Archive {plural(toArchive.length)}</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Archive {plural(toArchive.length)}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Reminders stop and clients can no longer upload or submit. You can unarchive any of them later.
+                    {openCount > 0 && ` ${openCount} of them are still open.`}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={archive}>Archive</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          {toUnarchive.length > 0 && (
+            <Button variant="outline" onClick={unarchive}>
+              Unarchive {plural(toUnarchive.length)}
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => setSelected(new Set())}>
             Clear
           </Button>

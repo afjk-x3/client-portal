@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useActionState, useId, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
@@ -21,8 +21,11 @@ import { removeFile } from "@/app/portal/requests/[id]/actions";
 import { rejection, uploadFile } from "@/app/portal/requests/[id]/upload";
 import { acceptItem, markItemMessagesRead, postStaffMessage, removeItem, returnItem } from "../actions";
 
-const subscribe = () => () => {};
-const locationHash = () => window.location.hash;
+const subscribeHash = (onStoreChange: () => void) => {
+  window.addEventListener("hashchange", onStoreChange);
+  return () => window.removeEventListener("hashchange", onStoreChange);
+};
+const readHash = () => window.location.hash;
 
 export type ReviewItem = {
   id: string;
@@ -45,16 +48,20 @@ export type ReviewItem = {
 /** `editable`: the request is open or completed. `open`: it is open, so staff can add files. */
 export function ReviewItems({ items, editable, open }: { items: ReviewItem[]; editable: boolean; open: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  // A dashboard link with #item-{id} opens that item's Sheet on arrival; rows open the rest.
+  const hash = useSyncExternalStore(subscribeHash, readHash, () => "");
+  const hashItem = /^#item-(.+)$/.exec(hash)?.[1] ?? null;
+  // The render that close() guarantees (replaceState fires no event, and
+  // setOpenId(null) is a no-op for a hash-opened Sheet — that left it stuck).
+  const [, forceRender] = useReducer((renders: number) => renders + 1, 0);
   // Next keeps visited pages mounted but hidden; close so Back and Forward never return to an open Sheet.
   useLayoutEffect(() => () => setOpenId(null), []);
-  // A dashboard link with #item-{id} opens that item's Sheet on arrival; rows open the rest.
-  const hashId = useSyncExternalStore(subscribe, locationHash, () => "");
-  const hashItem = /^#item-(.+)$/.exec(hashId)?.[1] ?? null;
   const selected = items.find((item) => item.id === (openId ?? hashItem));
   const close = () => {
-    setOpenId(null);
-    // Drop the anchor too, so a closed Sheet cannot reopen from it.
+    // Drop the anchor first, so the re-render below reads a cleared hash.
     if (window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
+    setOpenId(null);
+    forceRender();
   };
 
   return (
@@ -145,7 +152,9 @@ function ItemDetails({
             (item.unavailableReason ? (
               <div className="flex flex-col gap-1">
                 <p className="text-sm font-medium">The client says they don&apos;t have this</p>
-                <p className="whitespace-pre-wrap text-sm">{item.unavailableReason}</p>
+                <p className="rounded-md bg-muted px-3 py-2 text-sm italic whitespace-pre-wrap">
+                  &ldquo;{item.unavailableReason}&rdquo;
+                </p>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No files yet.</p>
@@ -212,7 +221,7 @@ function ItemDetails({
       <div className="flex flex-col gap-4 border-t pt-4">
         {canAccept && (
           <ActionButton action={() => acceptItem(item.id)} success="Item accepted.">
-            Accept
+            {item.unavailableReason ? "Accept as unavailable" : "Accept"}
           </ActionButton>
         )}
         {canReturn && <NeedsChangesForm itemId={item.id} />}

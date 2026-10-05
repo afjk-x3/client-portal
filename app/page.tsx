@@ -1,8 +1,13 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { APP_NAME } from "@/lib/constants";
+import { getUser, homePath } from "@/lib/auth";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  // Authed visitors leave at once, so browser Back after signing in never
+  // returns to a public page.
+  if (await getUser()) redirect(await homePath());
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 p-6">
       <p className="text-sm font-medium text-muted-foreground">{APP_NAME}</p>

@@ -104,6 +104,17 @@ export async function markUnavailable(itemId: string, reason: string): Promise<A
   return { ok: true };
 }
 
+/** The contact takes back "I don't have this"; the upload path returns. */
+export async function undoUnavailable(itemId: string): Promise<ActionResult> {
+  if (!isId(itemId)) return fail(notFound);
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("undo_unavailable", { item_id: itemId });
+  if (error) return fail(error);
+
+  revalidateRequestPages();
+  return { ok: true };
+}
+
 /** A contact's message on an item; queued emails only come from staff replies. */
 export async function postItemMessage(itemId: string, body: string): Promise<ActionResult> {
   if (!isId(itemId)) return fail(notFound);

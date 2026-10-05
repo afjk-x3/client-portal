@@ -2,7 +2,7 @@
 -- Item a4: optional file item with no files; a1: file item with a file;
 -- a3: text item; a9: in a draft request.
 begin;
-select plan(21);
+select plan(28);
 \ir fixtures/seed.psql
 
 select tests.login_as('00000000-0000-0000-0000-0000000000c2');
@@ -105,6 +105,32 @@ select results_eq(
 select throws_ok($$ update public.request_items set unavailable_reason = 'x'
      where id = '10000000-0000-0000-0000-0000000000a3' $$,
   '23514', null, 'the column refuses a reason on a written-answer item');
+
+-- undo_unavailable: the contact takes back "I don't have this".
+reset role;
+insert into public.request_items (id, request_id, firm_id, position, title, kind, required)
+values ('10000000-0000-0000-0000-0000000000a6', 'd0000000-0000-0000-0000-0000000000a2',
+  'f0000000-0000-0000-0000-00000000000a', 2, 'A2 undo', 'file', true);
+select tests.login_as('00000000-0000-0000-0000-0000000000c2');
+select throws_ok($$ select public.undo_unavailable('10000000-0000-0000-0000-0000000000a6') $$,
+  'P0001', 'invalid_state', 'undo before the answer is refused');
+select lives_ok($$ select public.mark_unavailable('10000000-0000-0000-0000-0000000000a6', 'No statement') $$,
+  'the contact answers the new item');
+select lives_ok($$ select public.undo_unavailable('10000000-0000-0000-0000-0000000000a6') $$,
+  'the contact undoes their own answer');
+select results_eq(
+  $$ select status, unavailable_reason, submitted_at from public.request_items
+     where id = '10000000-0000-0000-0000-0000000000a6' $$,
+  $$ values ('requested'::text, null::text, null::timestamptz) $$,
+  'the item is requested again with no reason');
+select lives_ok($$ select public.mark_unavailable('10000000-0000-0000-0000-0000000000a6', 'Still none') $$,
+  'the item can be marked unavailable again after an undo');
+select tests.login_as('00000000-0000-0000-0000-0000000000c1');
+select throws_ok($$ select public.undo_unavailable('10000000-0000-0000-0000-0000000000a6') $$,
+  'P0001', 'not_allowed', 'another client''s contact cannot undo');
+select throws_ok($$ select public.undo_unavailable('10000000-0000-0000-0000-0000000000a5') $$,
+  'P0001', 'invalid_state', 'an accepted item cannot be undone');
+reset role;
 
 set local role anon;
 select throws_ok($$ select public.mark_unavailable('10000000-0000-0000-0000-0000000000a4', 'x') $$,

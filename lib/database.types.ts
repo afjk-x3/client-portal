@@ -927,6 +927,7 @@ export type Database = {
       }
       template_from_request: { Args: { request_id: string }; Returns: string }
       unarchive_request: { Args: { request_id: string }; Returns: string }
+      undo_unavailable: { Args: { item_id: string }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useId, useLayoutEffect, useState } from "react";
+import { useActionState, useId, useLayoutEffect, useTransition, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { BellRing, Copy, Download, FilePlus, Plus } from "lucide-react";
+import { Archive, ArchiveRestore, BellRing, Copy, Download, Ellipsis, FilePlus, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton } from "@/components/action-button";
 import { DatePicker } from "@/components/date-picker";
@@ -16,6 +16,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,7 +55,7 @@ export function RequestActions({
   const archived = status === "archived";
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {!archived && (
         <EditDetailsDialog requestId={requestId} title={title} dueDate={dueDate} message={message} />
       )}
@@ -59,30 +66,76 @@ export function RequestActions({
           Send reminder
         </ActionButton>
       )}
-      <Button variant="outline" asChild>
-        <a href={`/api/requests/${requestId}/zip`} download>
-          <Download />
-          Download all (.zip)
-        </a>
-      </Button>
-      <Button variant="outline" asChild>
-        <Link href={`/app/requests/new?client=${clientId}&from=${requestId}`}>
-          <Copy />
-          Copy
-        </Link>
-      </Button>
-      <ActionButton variant="outline" action={() => saveRequestAsTemplate(requestId)}>
-        <FilePlus />
-        Save as template
-      </ActionButton>
-      <ActionButton
-        variant="outline"
-        action={() => setRequestArchived(requestId, !archived)}
-        success={archived ? "Request unarchived." : "Request archived. Reminders have stopped."}
-      >
-        {archived ? "Unarchive" : "Archive"}
-      </ActionButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" aria-label="More actions">
+            <Ellipsis />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem asChild>
+            <a href={`/api/requests/${requestId}/zip`} download>
+              <Download />
+              Download all (.zip)
+            </a>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href={`/app/requests/new?client=${clientId}&from=${requestId}`}>
+              <Copy />
+              Copy
+            </Link>
+          </DropdownMenuItem>
+          <MenuAction action={() => saveRequestAsTemplate(requestId)}>
+            <FilePlus />
+            Save as template
+          </MenuAction>
+          <DropdownMenuSeparator />
+          <MenuAction
+            action={() => setRequestArchived(requestId, !archived)}
+            success={archived ? "Request unarchived." : "Request archived. Reminders have stopped."}
+          >
+            {archived ? (
+              <>
+                <ArchiveRestore />
+                Unarchive
+              </>
+            ) : (
+              <>
+                <Archive />
+                Archive
+              </>
+            )}
+          </MenuAction>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
+  );
+}
+
+/** A server action as a menu item: pending disables it, the result lands in a toast. */
+function MenuAction({
+  action,
+  success,
+  children,
+}: {
+  action: () => Promise<ActionResult<unknown>>;
+  success?: string;
+  children: ReactNode;
+}) {
+  const [pending, startTransition] = useTransition();
+  return (
+    <DropdownMenuItem
+      disabled={pending}
+      onSelect={() =>
+        startTransition(async () => {
+          const result = await action();
+          if (!result.ok) toast.error(result.error);
+          else if (success) toast.success(success);
+        })
+      }
+    >
+      {children}
+    </DropdownMenuItem>
   );
 }
 

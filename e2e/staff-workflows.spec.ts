@@ -114,12 +114,26 @@ test("settings, team, templates, drafts, and open-request edits", async ({ brows
   await dialog.getByRole("button", { name: "Save" }).click();
   await expectToast(page, "Request updated.");
   await expect(page.getByRole("heading", { name: /Quarterly \(Q3\)/ })).toBeVisible();
-  await page.getByRole("button", { name: "Archive" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
   await expectToast(page, "Request archived.");
   await expect(page.getByRole("heading", { name: /Quarterly/ })).toContainText("Archived");
-  await page.getByRole("button", { name: "Unarchive" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Unarchive" }).click();
   await expectToast(page, "Request unarchived.");
   await expect(page.getByRole("heading", { name: /Quarterly/ })).toContainText("Open");
+
+  // Bulk actions cover archived rows: archive from the list, then unarchive.
+  await page.getByRole("link", { name: "Requests", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Select Quarterly (Q3)" }).check();
+  await page.getByRole("button", { name: "Archive 1 request" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Archive" }).click();
+  await expectToast(page, "Archived 1 request.");
+  await page.getByLabel("Status").selectOption("archived");
+  await expect(page).toHaveURL(/status=archived/);
+  await page.getByRole("checkbox", { name: "Select Quarterly (Q3)" }).check();
+  await page.getByRole("button", { name: "Unarchive 1 request" }).click();
+  await expectToast(page, "Unarchived 1 request.");
 
   // Client archive and the "Show archived" filter.
   await page.goto(clientUrl);

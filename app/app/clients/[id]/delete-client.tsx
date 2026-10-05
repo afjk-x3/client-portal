@@ -29,6 +29,7 @@ export function DeleteClient({ clientId, name }: { clientId: string; name: strin
     startTransition(async () => {
       const result = await deleteClient(clientId, typed);
       if (!result.ok) toast.error(result.error);
+      else toast.success("Client deleted.");
     });
   }
 

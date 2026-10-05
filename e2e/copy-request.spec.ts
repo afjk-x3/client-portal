@@ -17,7 +17,8 @@ test("copy a sent request", async ({ page }) => {
   await expect(page).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
   const requestId = page.url().split("/").pop()!;
 
-  await page.getByRole("link", { name: "Copy" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy" }).click();
   await expect(page).toHaveURL(new RegExp(`/app/requests/new\\?client=${clientId}&from=${requestId}`));
   await expect(page.getByText("Copy of “2026 tax documents”")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("2026 tax documents");
@@ -62,7 +63,8 @@ test("save a sent request as a template", async ({ page }) => {
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/requests\/[0-9a-f-]{36}$/);
 
-  await page.getByRole("button", { name: "Save as template" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Save as template" }).click();
   await expect(page).toHaveURL(/\/app\/templates\/[0-9a-f-]{36}$/);
   await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("2026 tax documents");
   await expect(page.getByRole("textbox", { name: "Item 1 title" })).toHaveValue("Photo ID");

@@ -38,10 +38,18 @@ test("a client asks and staff answer", async ({ page, browser }) => {
   await expect(sheet.getByText("New", { exact: true })).toBeVisible();
   await expect(sheet.getByText("Which bank?")).toBeVisible();
 
-  // Staff answer under "Write to the client"; the reply marks the question read.
+  // Close immediately: the hash-opened sheet must close without a reply to force a render.
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).toBeHidden();
+
+  // Reopen from the item row, answer, and close again.
+  await page.getByRole("button", { name: "Bank statement" }).click();
+  await expect(sheet).toBeVisible();
   await sheet.getByRole("textbox", { name: "Write to the client" }).fill("The BDO one, please.");
   await sheet.getByRole("button", { name: "Send", exact: true }).click();
   await expectToast(page, "Message sent.");
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).toBeHidden();
   await page.goto("/app");
   await expect(page.getByRole("tab", { name: "Messages (0)" })).toBeVisible();
 
@@ -75,7 +83,8 @@ test("a client asks and staff answer", async ({ page, browser }) => {
     .filter({ hasText: "One more thing." })
     .getByRole("link", { name: "2026 tax documents" })
     .click();
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
   await page.goto("/app");
   await expect(page.getByRole("tab", { name: "Messages (0)" })).toBeVisible();
 });

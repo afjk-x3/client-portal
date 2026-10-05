@@ -535,3 +535,22 @@ export async function archiveRequests(requestIds: string[]): Promise<ActionResul
   revalidatePath("/app/requests");
   return { ok: true, data: { archived: data.length } };
 }
+
+/** Same effect as unarchiving each request: the guarded RPC, one call per id. */
+export async function unarchiveRequests(requestIds: string[]): Promise<ActionResult<{ unarchived: number }>> {
+  await requireStaff();
+  const parsed = archiveRequestsSchema.safeParse(requestIds);
+  if (!parsed.success) return fail(notFound);
+
+  const supabase = await createClient();
+  let unarchived = 0;
+  for (const requestId of parsed.data) {
+    const { data, error } = await supabase.rpc("unarchive_request", { request_id: requestId });
+    if (error) return fail(error);
+    if (data) unarchived += 1;
+  }
+  if (unarchived === 0) return fail(staleState);
+
+  revalidatePath("/app/requests");
+  return { ok: true, data: { unarchived } };
+}
