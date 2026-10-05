@@ -6,6 +6,9 @@ import { getUser } from "@/lib/auth";
 import { signInDestination } from "./actions";
 import { LoginForm } from "./login-form";
 
+// Blocks at request time: the auth check reads cookies, which cannot sit in a static shell.
+export const instant = false;
+
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const { next } = await searchParams;
   // replace (not push) on the auth stack: Back skips the sign-in screens too.

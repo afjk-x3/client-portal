@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { APP_NAME } from "@/lib/constants";
 import { getUser, homePath } from "@/lib/auth";
 
+// Blocks at request time: the auth check reads cookies, which cannot sit in a static shell.
+export const instant = false;
+
 export default async function LandingPage() {
   // Authed visitors leave at once, so browser Back after signing in never
   // returns to a public page.
