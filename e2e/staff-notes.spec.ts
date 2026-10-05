@@ -51,6 +51,8 @@ test("staff notes stay inside the firm", async ({ page, browser }) => {
 
   // The client page lists it, labeled and linked to the request.
   await page.getByRole("link", { name: "Clients", exact: true }).click();
+  // The heading first: the same link still exists (hidden) on the page we left.
+  await expect(page.getByRole("heading", { name: "Clients", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Pat Client" }).click();
   const clientNotes = page.getByRole("region", { name: "Notes" });
   await expect(clientNotes).toContainText("Called Pat. Friday.");

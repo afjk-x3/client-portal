@@ -78,6 +78,8 @@ test("pause, resume, edit, and delete a schedule", async ({ browser }) => {
 
   // The template's delete dialog counts the schedules it takes with it.
   await page.getByRole("link", { name: "Templates" }).click();
+  // The heading first: the same link still exists (hidden) on the page we left.
+  await expect(page.getByRole("heading", { name: "Templates", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Annual tax return (starter)" }).click();
   await page.getByRole("button", { name: "Delete template" }).click();
   const dialog = page.getByRole("alertdialog");

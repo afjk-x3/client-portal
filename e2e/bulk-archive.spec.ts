@@ -59,6 +59,8 @@ test("staff tick requests and archive them together", async ({ page }) => {
 
   // A colleague archives the ticked request first: the batch is stale.
   await page.getByRole("link", { name: "Clients", exact: true }).click();
+  // The heading first: the same link still exists (hidden) on the page we left.
+  await expect(page.getByRole("heading", { name: "Clients", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Pat Client", exact: true }).click();
   await page.getByRole("link", { name: "New request" }).click();
   await fillRequest(page, "Q4 papers", "Photo ID");
